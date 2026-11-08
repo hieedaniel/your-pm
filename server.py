@@ -24,8 +24,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import json
 import os
+import secrets
 import time
 from urllib.parse import urlsplit, parse_qs
 
@@ -39,6 +42,7 @@ from mcp_multi import MultiSourceSearch
 from mcp_perf import PerfSearchProxy
 from wma_agent import build_extractor, extractor_info, probe_wma
 from orchestrator import Orchestrator
+import kb_admin as KB
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 # 容器化部署：配置文件路径与监听地址允许用环境变量覆盖。
@@ -52,6 +56,42 @@ for _env, _key in (("QS_HOST", "host"), ("QS_PORT", "port")):
     _v = os.environ.get(_env)
     if _v:
         CFG["server"][_key] = int(_v) if _key == "port" else _v
+
+# 知识库可写目录：内置 docs-kaiyi/ 只读，管理页上传的文档落在这里。
+# 容器部署时必须挂出来（否则重建容器会丢），见 docker-compose.server.yml。
+KB_DIR = os.environ.get("QS_KB_DIR") or os.path.join(ROOT, "data", "kb")
+DATA_DIR = os.path.dirname(KB_DIR)
+
+
+def _resolve_admin_token():
+    """管理口令三级来源：环境变量 > config.admin.token > data/.admin_token（首次自动生成）。
+
+    自动生成是为了「不给口令也能跑」，但绝不静默放行：生成一次就落盘，
+    重启不变，启动日志里会明确打出来。公网部署建议显式设 QS_ADMIN_TOKEN。
+    """
+    t = (os.environ.get("QS_ADMIN_TOKEN")
+         or (CFG.get("admin") or {}).get("token") or "").strip()
+    if t:
+        return t, "环境变量/配置"
+    path = os.path.join(DATA_DIR, ".admin_token")
+    try:
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                old = f.read().strip()
+            if old:
+                return old, "data/.admin_token"
+        t = secrets.token_urlsafe(18)
+        os.makedirs(DATA_DIR, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(t)
+        os.chmod(path, 0o600)
+        return t, "首次自动生成"
+    except OSError:
+        # 只读文件系统：退化成内存口令，本次进程内有效
+        return secrets.token_urlsafe(18), "内存（无写权限，重启会变）"
+
+
+ADMIN_TOKEN, ADMIN_TOKEN_SRC = _resolve_admin_token()
 
 SUBSCRIBERS = set()
 SESSIONS = {}
@@ -127,15 +167,16 @@ async def emit(event: str, data: dict):
 # 启动装配
 # --------------------------------------------------------------------------
 def build_sources(mcfg: dict, vocab: dict):
-    """按 config.mcp.sources 组装数据源；没有 sources 就退回旧的单源写法。"""
+    """按「管理页保存的源 > config.mcp.sources > 旧版单源写法」组装数据源。"""
     global SOURCE_CLIENTS
     SOURCE_CLIENTS = []
-    # transport=local 时不建任何外部源：否则下面的兼容分支会拿 mcp.http.url
-    # 当「默认源」，本地知识库还没接上就被一条过期的 perf 地址顶掉了
-    if (mcfg.get("transport") or "local") == "local":
-        return []
-    raw = mcfg.get("sources") or []
-    if not raw:      # 兼容旧配置：mcp.transport / mcp.http / mcp.adapter
+    raw = KB.load_sources(KB_DIR) or mcfg.get("sources") or []
+    if not raw:
+        # transport=local 且没有任何外部源：不建连接。否则下面的兼容分支会拿
+        # mcp.http.url 当「默认源」，本地知识库还没接上就被一条过期地址顶掉。
+        if (mcfg.get("transport") or "local") == "local":
+            return []
+        # 兼容旧配置：mcp.transport / mcp.http / mcp.adapter
         raw = [{"name": "default", "enabled": True, "adapter": mcfg.get("adapter", "none"),
                 "url": mcfg.get("http", {}).get("url", ""),
                 "token": mcfg.get("http", {}).get("token", ""),
@@ -162,6 +203,24 @@ def build_sources(mcfg: dict, vocab: dict):
     return entries
 
 
+def rebuild_search():
+    """（重新）装配检索入口。管理页改了 MCP 源后调它即可热生效，不用重启容器。"""
+    global SEARCH
+    mcfg = CFG["mcp"]
+    entries = build_sources(mcfg, VOCAB)
+    if len(entries) > 1:
+        SEARCH = MultiSourceSearch(entries)
+    elif entries:
+        SEARCH = entries[0]["proxy"]
+    elif mcfg.get("adapter") == "perf":
+        SEARCH = PerfSearchProxy(MCP, mcfg.get("perf"), VOCAB)
+    else:
+        SEARCH = MCP
+    if ORCH:
+        ORCH.mcp = SEARCH
+    return entries
+
+
 def bootstrap():
     global LOCAL, MCP, EXTRACTOR, ORCH, ASR_CHECK, SEARCH, DEMO_TURNS
     # 接入形态自检：Resource ID / 版本 / 计费 / 鉴权 / endpoint / StreamMode / 项目
@@ -171,7 +230,9 @@ def bootstrap():
     docs_dir = mcfg["docs_dir"]
     if not os.path.isabs(docs_dir):
         docs_dir = os.path.join(ROOT, docs_dir)
-    LOCAL = LocalMcpServer(docs_dir)
+    # 两个目录一套索引：内置只读文档 + 管理页上传的可写文档
+    os.makedirs(KB_DIR, exist_ok=True)
+    LOCAL = LocalMcpServer([docs_dir, KB_DIR])
     MCP = McpClient(mcfg, LOCAL)
 
     tags = LOCAL.store.hotwords(60)
@@ -191,15 +252,7 @@ def bootstrap():
     orch_cfg["policy"] = CFG["policy"]
     # 适配层：真实 MCP 的工具是业务 CRUD，编排器要的是 docs.search 语义。
     # 换回本地文档只改 config.mcp.adapter = "none"。
-    entries = build_sources(mcfg, vocab)
-    if len(entries) > 1:
-        SEARCH = MultiSourceSearch(entries)
-    elif entries:
-        SEARCH = entries[0]["proxy"]
-    elif mcfg.get("adapter") == "perf":
-        SEARCH = PerfSearchProxy(MCP, mcfg.get("perf"), vocab)
-    else:
-        SEARCH = MCP
+    entries = rebuild_search()
     # 演示脚本跟着数据源走，否则播出来全是空卡
     use_perf = (any(e.get("adapter") == "perf" for e in entries)
                 or mcfg.get("adapter") == "perf")
@@ -226,8 +279,10 @@ def bootstrap():
 # --------------------------------------------------------------------------
 def _resp(status: int, body: bytes, ctype: str = "application/json; charset=utf-8",
           extra: str = "") -> bytes:
-    reason = {200: "OK", 201: "Created", 400: "Bad Request",
-              404: "Not Found", 500: "Internal Server Error"}.get(status, "OK")
+    reason = {200: "OK", 201: "Created", 400: "Bad Request", 401: "Unauthorized",
+              403: "Forbidden", 404: "Not Found", 413: "Payload Too Large",
+              422: "Unprocessable Entity", 500: "Internal Server Error",
+              503: "Service Unavailable"}.get(status, "OK")
     head = ("HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\n"
             "Cache-Control: no-store\r\nConnection: close\r\n%s\r\n" %
             (status, reason, ctype, len(body), extra))
@@ -277,6 +332,163 @@ def state():
     }
 
 
+# --------------------------------------------------------------------------
+# 知识库管理接口（全部要求 ADMIN_TOKEN）
+# --------------------------------------------------------------------------
+def _admin_ok(headers, u) -> bool:
+    got = (headers.get("x-admin-token") or "").strip()
+    if not got:
+        got = (parse_qs(u.query).get("token") or [""])[0].strip()
+    return bool(ADMIN_TOKEN) and secrets.compare_digest(got, ADMIN_TOKEN)
+
+
+def _kb_docs():
+    """内置 + 上传合并成一份清单，前端据此区分能不能删。"""
+    uploaded = {f["doc_id"]: f for f in KB.kb_files(KB_DIR)}
+    out = []
+    for d in (LOCAL.store.listing() if LOCAL else []):
+        f = uploaded.get(d.get("doc_id")) or {}
+        out.append(dict(d, uploaded=bool(f), bytes=f.get("bytes", 0),
+                        mtime=f.get("mtime", "")))
+    return out
+
+
+async def _after_import(title: str, kind: str, fid: str, warn: str = ""):
+    LOCAL.store.load()                 # 重建切块与 DF；检索对象持有同一个 store，无需重建
+    msg = "知识库已导入：%s（%s）· 当前 %d 篇 / %d 块" % (
+        title, kind, len(LOCAL.store.docs), len(LOCAL.store.chunks))
+    await emit("status", {"level": "warn" if warn else "info",
+                          "message": msg + ("；" + warn if warn else "")})
+
+
+async def kb_api(p: str, method: str, u, headers, body: bytes):
+    """返回 (status, obj)。所有分支都要求口令，避免公网被人上传垃圾或改 MCP 地址。"""
+    if not _admin_ok(headers, u):
+        return 401, {"ok": False,
+                     "error": "未授权：请求头 X-Admin-Token 缺失或不匹配"}
+
+    q = parse_qs(u.query)
+
+    def payload():
+        try:
+            return json.loads(body.decode("utf-8", "replace") or "{}")
+        except Exception:
+            return {}
+
+    if p == "/api/kb/state":
+        files = KB.kb_files(KB_DIR)
+        return 200, {
+            "ok": True, "kb_dir": KB_DIR, "admin_token_src": ADMIN_TOKEN_SRC,
+            "docs": len(LOCAL.store.docs), "chunks": len(LOCAL.store.chunks),
+            "uploaded": len(files), "files": files,
+            "sources": KB.load_sources(KB_DIR),
+            "active_sources": [n["name"] for n in SOURCE_CLIENTS],
+            "search": SEARCH.stats() if hasattr(SEARCH, "stats") else {},
+            "pdf_ready": _pdf_ready(),
+        }
+
+    if p == "/api/kb/docs":
+        return 200, {"ok": True, "docs": _kb_docs()}
+
+    if p == "/api/kb/reindex":
+        LOCAL.store.load()
+        await emit("status", {"level": "info",
+                              "message": "知识库已重建索引 · %d 篇 / %d 块" %
+                                         (len(LOCAL.store.docs), len(LOCAL.store.chunks))})
+        return 200, {"ok": True, "docs": len(LOCAL.store.docs),
+                     "chunks": len(LOCAL.store.chunks)}
+
+    if p == "/api/kb/upload" and method == "POST":
+        d = payload()
+        name = d.get("filename") or ""
+        b64 = d.get("data") or ""
+        if not b64:
+            return 400, {"ok": False, "error": "data 为空（应为文件内容的 base64）"}
+        if len(b64) > 36 * 1024 * 1024:
+            return 413, {"ok": False, "error": "文件过大（上限 25MB）"}
+        try:
+            raw = base64.b64decode(b64, validate=False)
+        except (binascii.Error, ValueError):
+            return 400, {"ok": False, "error": "base64 解不开"}
+        tags = [t.strip() for t in (d.get("tags") or "").split(",") if t.strip()]
+        try:
+            title, md, kind = KB.to_markdown(name, raw)
+        except (ValueError, RuntimeError) as e:
+            return 422, {"ok": False, "error": str(e)}
+        fid = KB.write_doc(KB_DIR, title, md, "上传：" + (name or title),
+                           tags=tags, name_hint=name or title)
+        await _after_import(title, kind, fid)
+        return 200, {"ok": True, "doc_id": fid, "title": title, "kind": kind,
+                     "chars": len(md)}
+
+    if p == "/api/kb/text" and method == "POST":
+        d = payload()
+        text = (d.get("text") or "").strip()
+        title = (d.get("title") or "").strip() or "手工录入"
+        if len(text) < 10:
+            return 400, {"ok": False, "error": "正文太短（至少 10 字）"}
+        tags = [t.strip() for t in (d.get("tags") or "").split(",") if t.strip()]
+        fid = KB.write_doc(KB_DIR, title, text, "手工录入", tags=tags,
+                           name_hint=title)
+        await _after_import(title, "text", fid)
+        return 200, {"ok": True, "doc_id": fid, "title": title, "chars": len(text)}
+
+    if p == "/api/kb/url" and method == "POST":
+        d = payload()
+        url = (d.get("url") or "").strip()
+        tags = [t.strip() for t in (d.get("tags") or "").split(",") if t.strip()]
+        try:
+            title, md, final = KB.fetch_url(url)
+        except (ValueError, RuntimeError) as e:
+            return 422, {"ok": False, "error": str(e)}
+        fid = KB.write_doc(KB_DIR, title, md, "网页：" + final, tags=tags,
+                           name_hint=title)
+        await _after_import(title, "url", fid)
+        return 200, {"ok": True, "doc_id": fid, "title": title,
+                     "chars": len(md), "url": final}
+
+    if p == "/api/kb/delete" and method == "POST":
+        d = payload()
+        doc_id = (d.get("doc_id") or "").strip()
+        if not KB.delete_doc(KB_DIR, doc_id):
+            return 400, {"ok": False,
+                         "error": "删不掉：只有上传的文档可以删，内置知识库是只读的"}
+        LOCAL.store.load()
+        await emit("status", {"level": "info", "message": "已删除文档 %s" % doc_id})
+        return 200, {"ok": True, "docs": len(LOCAL.store.docs),
+                     "chunks": len(LOCAL.store.chunks)}
+
+    if p == "/api/kb/sources" and method == "POST":
+        d = payload()
+        clean = KB.save_sources(KB_DIR, d.get("sources") or [])
+        entries = rebuild_search()
+        await emit("status", {"level": "info",
+                              "message": "MCP 知识源已更新 · 生效 %d 个：%s" %
+                                         (len(entries), "、".join(
+                                             e["name"] for e in entries) or "无（只用本地库）")})
+        return 200, {"ok": True, "sources": clean,
+                     "active": [e["name"] for e in entries]}
+
+    if p == "/api/kb/sources/test" and method == "POST":
+        d = payload()
+        url = (d.get("url") or "").strip()
+        tok = (d.get("token") or "").strip()
+        if not url:
+            return 400, {"ok": False, "error": "url 为空"}
+        r = await probe_mcp(url, tok, 8.0)
+        return 200, {"ok": bool(r.get("ok")), "result": r}
+
+    return 404, {"ok": False, "error": "未知接口 %s" % p}
+
+
+def _pdf_ready() -> bool:
+    try:
+        import pypdf            # noqa: F401,PLC0415
+        return True
+    except ImportError:
+        return False
+
+
 async def handle_http(writer, method, path, headers, body: bytes):
     u = urlsplit(path)
     p = u.path
@@ -292,6 +504,13 @@ async def handle_http(writer, method, path, headers, body: bytes):
         with open(os.path.join(ROOT, "sample.wav"), "rb") as f:
             data = f.read()
         writer.write(_resp(200, data, "audio/wav"))
+    elif p in ("/kb", "/kb/"):
+        with open(os.path.join(ROOT, "kb.html"), "rb") as f:
+            data = f.read()
+        writer.write(_resp(200, data, "text/html; charset=utf-8"))
+    elif p.startswith("/api/kb/"):
+        code, obj = await kb_api(p, method, u, headers, body)
+        writer.write(_resp(code, json.dumps(obj, ensure_ascii=False).encode("utf-8")))
     elif p == "/api/state":
         writer.write(_json(state()))
     elif p == "/api/probe":
@@ -678,6 +897,10 @@ async def main():
            ("文档 %d 篇 / %d 块" % (len(LOCAL.store.docs), len(LOCAL.store.chunks))
             if CFG["mcp"].get("adapter") != "perf"
             else CFG["mcp"].get("http", {}).get("url", ""))))
+    print(" 知识库      : 内置+上传 %d 篇 / %d 块 · 可写目录 %s" %
+          (len(LOCAL.store.docs), len(LOCAL.store.chunks), KB_DIR))
+    print(" 管理页      : http://%s:%d/kb   口令 %s（%s）" %
+          (s["host"], s["port"], ADMIN_TOKEN, ADMIN_TOKEN_SRC))
     for e in (ASR_CHECK["errors"] if ASR_CHECK else []):
         print(" [自检错误] " + e)
     for w in (ASR_CHECK["warnings"] if ASR_CHECK else []):

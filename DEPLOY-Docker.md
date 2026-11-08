@@ -159,6 +159,96 @@ docker push registry.example.com/infra/qieshen-live:1.0
 
 ---
 
+## 2.2 知识库管理页与 MCP 接入
+
+服务起来后访问 **`https://你的域名/kb`**（或 `http://127.0.0.1:19535/kb`）。
+
+### 口令从哪来
+
+三级来源，优先级从高到低：
+
+1. 环境变量 `QS_ADMIN_TOKEN`（推荐，写进 `.env` 或 compose）
+2. `config.json` 的 `admin.token`
+3. 都没配 → 首次启动自动生成一个，落到 `data/.admin_token`，**重启不变**
+
+自动生成的话，从日志里取：
+
+```bash
+docker logs qieshen-live | grep 管理页
+# 管理页      : http://0.0.0.0:19535/kb   口令 xxxxxxxxxxxxxx（首次自动生成）
+```
+
+> `/api/kb/*` 全部要求 `X-Admin-Token` 请求头（或 `?token=`）。前端页面自己会存 localStorage，
+> 但接口层是硬校验的——公网上没口令改不了知识库、也改不了 MCP 地址。
+
+### 能导入什么
+
+| 格式 | 处理方式 | 依赖 |
+|---|---|---|
+| `.md` / `.markdown` / `.txt` | 原文入库，`#` 标题自动切块 | 无 |
+| `.docx` | 解 `word/document.xml`，标题样式转 `#` 分节 | **无**（不用 python-docx） |
+| `.pdf` | pypdf 抽文字，按页分节 | `pypdf`（镜像已装） |
+| `.html` | 去导航/页脚/脚本，保留正文 | 无 |
+| 网页 URL | 同上，抓取后入库 | 无 |
+
+- 单文件上限 **25MB**，单文档截断 **40 万字符**（防止一份大手册拖慢检索）
+- 扫描版 PDF 抽不出文字，会明确返回「大概率是扫描件，需要 OCR」
+- `data/kb/` 是唯一可写目录；`docs-kaiyi/` 内置 19 篇只读，删不掉
+- 导入完成后**索引立即重建**，不需要重启，正在进行的会话下一句就能召回
+
+### 数据放哪、怎么备份
+
+```bash
+/opt/qieshen-live/data/
+├── kb/                # 上传的文档（*.md）+ _mcp_sources.json
+└── .admin_token       # 自动生成的管理口令
+```
+
+compose 里已经挂了 `./data:/app/data`。**不挂这个卷的话，重建容器 = 上传的文档全丢。**
+备份就一句：
+
+```bash
+tar -czf kb-backup-$(date +%F).tgz -C /opt/qieshen-live data/
+```
+
+### 加 MCP 知识源
+
+管理页最下面「MCP 知识源」→ 填名称 / URL（streamable HTTP）/ Token / 权重 → 先点「测试」→
+再「保存并生效」。
+
+- 保存后立即重建检索入口，**不用重启容器**
+- 多个源按 `weight` 合并排序；关掉某个源等于把它从检索里摘掉
+- 一个源都没配时，只用本地文档库，行为与之前完全一致
+- 配置落在 `data/kb/_mcp_sources.json`，优先级高于 `config.json` 里的 `mcp.sources`
+
+命令行也能做（脚本化时方便）：
+
+```bash
+T=$(cat /opt/qieshen-live/data/.admin_token)
+curl -s -H "X-Admin-Token: $T" localhost:19535/api/kb/state | python3 -m json.tool
+curl -s -H "X-Admin-Token: $T" -H 'Content-Type: application/json' \
+     -d '{"title":"访客问答口径","text":"# 结论\n\n刷脸登记即可，不用前台电话确认。"}' \
+     localhost:19535/api/kb/text
+curl -s -H "X-Admin-Token: $T" -H 'Content-Type: application/json' \
+     -d '{"sources":[{"name":"OA","url":"https://k.example.com/mcp","token":"xxx"}]}' \
+     localhost:19535/api/kb/sources
+```
+
+| 接口 | 作用 |
+|---|---|
+| `GET /api/kb/state` | 文档数 / 块数 / 上传数 / 生效源 / pypdf 是否可用 |
+| `GET /api/kb/docs` | 文档清单（区分内置与上传） |
+| `POST /api/kb/upload` | `{filename, data(base64), tags}` |
+| `POST /api/kb/text` | `{title, text, tags}` |
+| `POST /api/kb/url` | `{url, tags}` |
+| `POST /api/kb/delete` | `{doc_id}`，只对上传的文档有效 |
+| `POST /api/kb/sources` | `{sources:[...]}`，保存并热生效 |
+| `POST /api/kb/sources/test` | `{url, token}`，只探测不保存 |
+| `POST /api/kb/reindex` | 手工重建索引（改了 `data/kb/` 里的文件后可用） |
+
+
+---
+
 ## 3. 端口 19535 与「机器上已经有很多服务」
 
 三件容易撞的事，deploy.sh 已经替你挡了两件：

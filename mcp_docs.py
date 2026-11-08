@@ -66,8 +66,14 @@ def parse_front_matter(raw: str):
 
 
 class DocStore:
-    def __init__(self, docs_dir: str):
-        self.docs_dir = docs_dir
+    def __init__(self, docs_dir):
+        # 支持多个目录：内置 docs-kaiyi（只读）+ data/kb（管理页上传的）。
+        # 两者格式完全一致（front-matter + markdown），所以不需要第二套索引。
+        if isinstance(docs_dir, (list, tuple)):
+            self.docs_dirs = [d for d in docs_dir if d]
+        else:
+            self.docs_dirs = [docs_dir]
+        self.docs_dir = self.docs_dirs[0] if self.docs_dirs else ""
         self.docs = {}
         self.chunks = []
         self.df = Counter()
@@ -78,56 +84,69 @@ class DocStore:
         self.docs.clear()
         self.chunks.clear()
         self.df.clear()
-        if not os.path.isdir(self.docs_dir):
-            os.makedirs(self.docs_dir, exist_ok=True)
-        for name in sorted(os.listdir(self.docs_dir)):
-            if not name.lower().endswith((".md", ".markdown", ".txt")):
-                continue
-            path = os.path.join(self.docs_dir, name)
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    raw = f.read()
-            except OSError:
-                continue
-            meta, body = parse_front_matter(raw)
-            vis = meta.get("visibility", "internal").lower()
-            if vis not in VISIBILITY_LEVEL:
-                vis = "internal"
-            doc = {
-                "doc_id": name,
-                "title": meta.get("title") or os.path.splitext(name)[0],
-                "visibility": vis,
-                "as_of": meta.get("as_of", "未标注"),
-                "tags": [t.strip() for t in meta.get("tags", "").split(",") if t.strip()],
-                # 客户实际会怎么说。只参与检索加权，不进 ASR 热词（「订了不用」当热词是噪音）
-                "say": [t.strip() for t in meta.get("say", "").split(",") if t.strip()],
-                # 卡片上的「出处」优先用 front-matter 声明（如 PPT 页码），否则退回文件名
-                "source": meta.get("source") or ("docs/" + name),
-                # 一句话结论：卡片主行。用户要的是「怎么答」，不是「原文在第几段」
-                "answer": (meta.get("answer") or "").strip(),
-                "body": body,
-            }
-            self.docs[name] = doc
-            # 按标题切块，段落过长再切
-            sections = re.split(r"(?m)^#{1,3}\s+", body)
-            for idx, sec in enumerate(sections):
-                sec = sec.strip()
-                if not sec:
+        for d in self.docs_dirs:
+            if not os.path.isdir(d):
+                os.makedirs(d, exist_ok=True)
+        for d in self.docs_dirs:
+            for name in sorted(os.listdir(d)):
+                if not name.lower().endswith((".md", ".markdown", ".txt")):
                     continue
-                for j in range(0, len(sec), 420):
-                    piece = sec[j:j + 420]
-                    if len(piece) < 12:
-                        continue
-                    label = "%s · 段%d" % (doc["title"], idx + 1)
-                    toks = tokenize(piece + " " + doc["title"] + " "
-                                    + " ".join(doc["tags"]) + " " + " ".join(doc["say"]))
-                    self.chunks.append({
-                        "chunk_id": "%s#%d.%d" % (name, idx, j),
-                        "doc_id": name, "title": label, "text": piece,
-                        "tokens": toks, "length": max(1, len(toks)),
-                        "visibility": vis, "as_of": doc["as_of"], "source": doc["source"],
-                        "tags": doc["tags"], "say": doc["say"], "answer": doc["answer"],
-                    })
+                if name in self.docs:      # 同名文档：先加载的目录优先，避免后一份覆盖内置
+                    print("[docs] 跳过同名文档：%s（%s）" % (name, d))
+                    continue
+                path = os.path.join(d, name)
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        raw = f.read()
+                except OSError:
+                    continue
+                self._add_doc(name, raw)
+        self._index()
+
+    def _add_doc(self, name: str, raw: str):
+        meta, body = parse_front_matter(raw)
+        vis = meta.get("visibility", "internal").lower()
+        if vis not in VISIBILITY_LEVEL:
+            vis = "internal"
+        doc = {
+            "doc_id": name,
+            "title": meta.get("title") or os.path.splitext(name)[0],
+            "visibility": vis,
+            "as_of": meta.get("as_of", "未标注"),
+            "tags": [t.strip() for t in meta.get("tags", "").split(",") if t.strip()],
+            # 客户实际会怎么说。只参与检索加权，不进 ASR 热词（「订了不用」当热词是噪音）
+            "say": [t.strip() for t in meta.get("say", "").split(",") if t.strip()],
+            # 卡片上的「出处」优先用 front-matter 声明（如 PPT 页码），否则退回文件名
+            "source": meta.get("source") or ("docs/" + name),
+            # 一句话结论：卡片主行。用户要的是「怎么答」，不是「原文在第几段」
+            "answer": (meta.get("answer") or "").strip(),
+            "body": body,
+        }
+        self.docs[name] = doc
+        # 按标题切块，段落过长再切
+        sections = re.split(r"(?m)^#{1,3}\s+", body)
+        for idx, sec in enumerate(sections):
+            sec = sec.strip()
+            if not sec:
+                continue
+            for j in range(0, len(sec), 420):
+                piece = sec[j:j + 420]
+                if len(piece) < 12:
+                    continue
+                label = "%s · 段%d" % (doc["title"], idx + 1)
+                toks = tokenize(piece + " " + doc["title"] + " "
+                                + " ".join(doc["tags"]) + " " + " ".join(doc["say"]))
+                self.chunks.append({
+                    "chunk_id": "%s#%d.%d" % (name, idx, j),
+                    "doc_id": name, "title": label, "text": piece,
+                    "tokens": toks, "length": max(1, len(toks)),
+                    "visibility": vis, "as_of": doc["as_of"], "source": doc["source"],
+                    "tags": doc["tags"], "say": doc["say"], "answer": doc["answer"],
+                })
+
+    def _index(self):
+        """DF 与平均长度必须在所有文档加载完之后算一次，不能边加边算。"""
+        self.df.clear()
         for c in self.chunks:
             self.df.update(set(c["tokens"]))
         self.avgdl = (sum(c["length"] for c in self.chunks) / len(self.chunks)

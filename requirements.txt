@@ -1,0 +1,7 @@
+# 唯一的第三方依赖：知识库管理页导入 PDF 时要抽文字。
+# 主链路（ASR / SSE / WS / 检索）全部是标准库，卸掉这个包服务照样能跑，
+# 只是 /api/kb/upload 收到 .pdf 时会返回「服务端没有安装 pypdf」。
+#
+# docx 不需要 python-docx —— docx 本质是 zip，直接用 zipfile + ElementTree 解
+# word/document.xml，省一个依赖、也省掉它把 lxml 拖进来的体积。
+pypdf>=5.0,<7

@@ -26,11 +26,19 @@ services:
       QS_HOST: "0.0.0.0"
       QS_PORT: "19535"
       QS_CONFIG: "/app/config.json"
+      QS_KB_DIR: "/app/data/kb"
+      # 知识库管理页的口令。留空则首次启动自动生成一个，落在 /app/data/.admin_token，
+      # 启动日志里会打印出来（docker logs qieshen-live | grep 管理页）。
+      # 公网部署建议在这里或 .env 里显式指定，别用自动生成的。
+      QS_ADMIN_TOKEN: "${QS_ADMIN_TOKEN:-}"
       TZ: "Asia/Shanghai"
 
     volumes:
       # 凭据只在宿主机上，镜像里没有。改 Key = 改这个文件 + restart。
       - ./config.json:/app/config.json:ro
+      # 知识库可写目录：管理页上传的文档、MCP 源配置、管理口令都在这里。
+      # 不挂出来的话，重建容器 = 上传的文档全丢。
+      - ./data:/app/data
 
     logging:
       driver: json-file

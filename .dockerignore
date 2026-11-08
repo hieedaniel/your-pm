@@ -28,6 +28,9 @@ WMA-提示词配置.md
 DEPLOY-Docker.md
 README.md
 
+# ---- 运行期数据（上传的知识库 / 管理口令），靠卷挂载 ----
+data/
+
 # ---- 产物与缓存 ----
 __pycache__/
 *.pyc

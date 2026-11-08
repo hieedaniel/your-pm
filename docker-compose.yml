@@ -25,11 +25,16 @@ services:
       QS_HOST: "0.0.0.0"           # 容器内必须监听全网卡，否则端口映射进不来
       QS_PORT: "19535"
       QS_CONFIG: "/app/config.json"
+      QS_KB_DIR: "/app/data/kb"
+      # 知识库管理页口令；留空则首次启动自动生成并打印在 docker logs 里
+      QS_ADMIN_TOKEN: "${QS_ADMIN_TOKEN:-}"
       TZ: "Asia/Shanghai"
 
     volumes:
       # 凭据留在宿主机，镜像里没有。改 Key 只需改这个文件 + restart。
       - ./config.json:/app/config.json:ro
+      # 知识库可写目录（上传文档 / MCP 源配置 / 管理口令），不挂会随容器一起丢
+      - ./data:/app/data
       # 知识库改了不想重新 build？取消下面这行注释即可热替换
       # - ./docs-kaiyi:/app/docs-kaiyi:ro
 

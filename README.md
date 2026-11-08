@@ -54,6 +54,18 @@ python server.py          # 读 config.json，默认 127.0.0.1:8780
 `wma.prompt_mode`：`agent` = 提示词放在 Agent 侧（每轮只发一句话，省约 3500 token 预填充）；
 `client` = 每轮连提示词一起发。
 
+## 知识库（导入文件 / 接 MCP）
+
+访问 **`/kb`** 进管理页（口令见 `docker logs qieshen-live | grep 管理页`）：
+
+- **导入文件**：md / txt / docx / pdf / html，拖进去即可，索引立即重建
+- **粘贴文本**：会议纪要、话术口径直接变成可检索文档
+- **抓取网页**：去掉导航页脚脚本，只留正文
+- **MCP 知识源**：填 URL + Token，多源按权重合并，保存即热生效（不重启）
+
+上传的文档与配置都在 `data/`（compose 已挂载），`docs-kaiyi/` 内置 19 篇只读。
+PDF 解析需要 `pypdf`（`requirements.txt` 唯一依赖），其余全部标准库。
+
 ## 目录
 
 ```
@@ -62,11 +74,14 @@ wsproto.py           手写 WebSocket / SSE（含 chunked 解码）
 doubao_asr.py        豆包流式 ASR 客户端与鉴权自检
 orchestrator.py      逐句链路编排：ASR → 主题 → 检索 → 卡片
 wma_agent.py         WMA 主题提取（ACP 客户端 / 本地规则）
-mcp_docs.py          知识库检索（MCP + 主题加权）
+mcp_docs.py          知识库检索（MCP + 主题加权），多目录合并索引
 mcp_client.py        MCP 传输层（stdio / http）
-prompts/             topic_extract.md 提示词 + taxonomy.json 封闭主题表
-docs-kaiyi/          19 篇知识库正文
+kb_admin.py          知识库导入（md/txt/docx/pdf/url）与 MCP 源配置
 index.html           前端单页（录音、字幕、卡片）
+kb.html              知识库管理页
+prompts/             topic_extract.md 提示词 + taxonomy.json 封闭主题表
+docs-kaiyi/          19 篇知识库正文（只读）
+data/                运行期数据：上传文档 / MCP 源 / 管理口令（.gitignore，卷挂载）
 ```
 
 ## 部署与运维

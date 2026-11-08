@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>知识库管理 · 切身产品经理</title>
+<style>
+  :root{
+    --bg:#f5f7fa; --card:#ffffff; --ink:#1c2532; --ink2:#4a5666; --ink3:#7b8798;
+    --blue:#1d4ed8; --blue-l:#eef4ff; --line:#e3e9f2;
+    --ok:#0f7b4f; --ok-l:#e8f8f0; --warn:#a8610a; --warn-l:#fff6e8; --err:#b42318; --err-l:#fdeceb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.6;
+       font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+  header{background:linear-gradient(135deg,#12325a 0%,#1d4ed8 100%);color:#fff;padding:18px 24px;
+         display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  header h1{margin:0;font-size:17px;font-weight:650;letter-spacing:.3px}
+  header .sub{font-size:12px;opacity:.78}
+  header a{color:#cfe0ff;font-size:12px;text-decoration:none;margin-left:auto;border:1px solid rgba(255,255,255,.3);
+           padding:5px 10px;border-radius:7px}
+  header a:hover{background:rgba(255,255,255,.12)}
+  main{padding:18px 24px 60px;max-width:1080px;margin:0 auto}
+  .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:16px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:11px;padding:13px 15px}
+  .stat b{display:block;font-size:22px;font-weight:680;letter-spacing:.5px}
+  .stat span{font-size:12px;color:var(--ink3)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:16px}
+  .card h2{margin:0 0 4px;font-size:14px;font-weight:650}
+  .card .tip{font-size:12px;color:var(--ink3);margin:0 0 12px}
+  label{display:block;font-size:12px;color:var(--ink2);margin:8px 0 4px}
+  input[type=text],input[type=password],textarea,select{
+    width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;font:inherit;
+    background:#fbfcfe;color:var(--ink)}
+  input:focus,textarea:focus{outline:2px solid #cfe0ff;border-color:#9dbcf7}
+  textarea{min-height:96px;resize:vertical}
+  button{font:inherit;padding:8px 14px;border-radius:8px;border:1px solid var(--line);
+         background:#fff;color:var(--ink);cursor:pointer}
+  button:hover{background:#f3f6fb}
+  button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  button.primary:hover{background:#1a45c0}
+  button.danger{color:var(--err);border-color:#f3c6c2}
+  button.danger:hover{background:var(--err-l)}
+  button.mini{padding:4px 9px;font-size:12px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+  .row > div{flex:1;min-width:150px}
+  .drop{border:1.5px dashed #b9cbe8;border-radius:11px;padding:22px;text-align:center;color:var(--ink3);
+        background:#fbfcfe;cursor:pointer;transition:.15s}
+  .drop.on{border-color:var(--blue);background:var(--blue-l);color:var(--blue)}
+  .drop b{color:var(--ink2)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{font-size:12px;color:var(--ink3);font-weight:600}
+  td .meta{font-size:11px;color:var(--ink3)}
+  .badge{font-size:11px;padding:1px 7px;border-radius:20px;background:var(--blue-l);color:var(--blue)}
+  .badge.up{background:var(--ok-l);color:var(--ok)}
+  .src-row{display:grid;grid-template-columns:1fr 2fr 1.3fr 70px 74px 88px;gap:8px;margin-bottom:8px;
+           align-items:center}
+  .src-row.head{font-size:11px;color:var(--ink3)}
+  .src-row input{padding:6px 8px;font-size:12.5px}
+  #log{font-size:12px;color:var(--ink2);background:#fbfcfe;border:1px solid var(--line);
+       border-radius:9px;padding:10px 12px;max-height:150px;overflow:auto;white-space:pre-wrap}
+  #log .e{color:var(--err)} #log .s{color:var(--ok)} #log .w{color:var(--warn)}
+  .gate{position:fixed;inset:0;background:rgba(18,30,48,.55);display:flex;align-items:center;
+        justify-content:center;padding:20px;z-index:9}
+  .gate .box{background:#fff;border-radius:14px;padding:22px 24px;width:380px;max-width:100%}
+  .gate h3{margin:0 0 6px;font-size:15px}
+  .gate p{margin:0 0 12px;font-size:12px;color:var(--ink3)}
+  .hide{display:none!important}
+  .hint{font-size:12px;color:var(--warn);background:var(--warn-l);border:1px solid #f4dfbc;
+        border-radius:8px;padding:8px 10px;margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>知识库管理</h1>
+    <div class="sub">导入文档 / 配置 MCP 知识源 · 保存后立即生效，无需重启</div>
+  </div>
+  <a href="/">← 回到实时页面</a>
+</header>
+
+<div class="gate" id="gate">
+  <div class="box">
+    <h3>需要管理口令</h3>
+    <p>口令在服务启动日志里打印（<code>管理页 … 口令 xxx</code>），也可用环境变量 <code>QS_ADMIN_TOKEN</code> 指定。</p>
+    <input type="password" id="tokenInput" placeholder="粘贴管理口令" autocomplete="off">
+    <div style="margin-top:12px;display:flex;gap:8px;justify-content:flex-end">
+      <button onclick="saveToken()" class="primary">进入</button>
+    </div>
+    <div id="gateErr" class="hint hide"></div>
+  </div>
+</div>
+
+<main>
+  <div class="grid">
+    <div class="stat"><b id="sDocs">–</b><span>文档总数</span></div>
+    <div class="stat"><b id="sChunks">–</b><span>检索片段</span></div>
+    <div class="stat"><b id="sUp">–</b><span>上传文档</span></div>
+    <div class="stat"><b id="sSrc">–</b><span>生效 MCP 源</span></div>
+  </div>
+
+  <div class="card">
+    <h2>导入文件</h2>
+    <p class="tip">支持 md / txt / docx / pdf / html，可多选。docx 与 pdf 会自动抽成 markdown 再入库。</p>
+    <div class="drop" id="drop">
+      <b>把文件拖到这里</b>，或点击选择（单文件上限 25MB）
+      <input type="file" id="file" multiple accept=".md,.markdown,.txt,.docx,.pdf,.html,.htm" class="hide">
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label>标签（可选，逗号分隔，用于主题加权）</label>
+        <input type="text" id="upTags" placeholder="例：一脸通,访客"></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>粘贴文本</h2>
+    <p class="tip">适合把一段话、会议纪要、微信里复制的内容直接变成可检索的文档。</p>
+    <div class="row">
+      <div style="flex:2"><label>标题</label><input type="text" id="txtTitle" placeholder="例：园区访客登记口径"></div>
+      <div><label>标签</label><input type="text" id="txtTags" placeholder="一脸通,访客"></div>
+    </div>
+    <label>正文（支持 markdown，用 # 分节更利于切块）</label>
+    <textarea id="txtBody" placeholder="# 一句话结论&#10;&#10;具体说明……"></textarea>
+    <div style="margin-top:10px"><button class="primary" onclick="importText()">导入文本</button></div>
+  </div>
+
+  <div class="card">
+    <h2>抓取网页</h2>
+    <p class="tip">会去掉导航、页脚、脚本，只保留正文。需要登录或纯前端渲染的页面抓不到。</p>
+    <div class="row">
+      <div style="flex:2"><label>URL</label><input type="text" id="url" placeholder="https://example.com/article"></div>
+      <div><label>标签</label><input type="text" id="urlTags" placeholder="政策,案例"></div>
+      <div style="flex:0 0 auto"><button class="primary" onclick="importUrl()">抓取导入</button></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>文档列表</h2>
+    <p class="tip">内置 docs-kaiyi 只读；带「上传」标记的可以删除。</p>
+    <table>
+      <thead><tr><th style="width:46%">标题</th><th>来源</th><th style="width:90px">大小</th><th style="width:120px">时间</th><th style="width:66px"></th></tr></thead>
+      <tbody id="docsBody"><tr><td colspan="5" style="color:#7b8798">加载中…</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h2>MCP 知识源</h2>
+    <p class="tip">填远程 MCP 的地址（streamable HTTP）与令牌。保存后立即重建检索入口，多源结果按权重合并。</p>
+    <div class="src-row head">
+      <div>名称</div><div>URL</div><div>Token</div><div>权重</div><div>启用</div><div>操作</div>
+    </div>
+    <div id="srcRows"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button onclick="addSrcRow()">+ 添加一行</button>
+      <button class="primary" onclick="saveSources()">保存并生效</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>操作记录</h2>
+    <div id="log">就绪。</div>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const LS = 'qs_kb_token';
+let TOKEN = localStorage.getItem(LS) || '';
+
+function log(msg, cls) {
+  const el = $('#log');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = '[' + new Date().toLocaleTimeString('zh-CN', {hour12:false}) + '] ' + msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+async function api(path, body) {
+  const opt = {headers: {'X-Admin-Token': TOKEN}};
+  if (body !== undefined) {
+    opt.method = 'POST';
+    opt.headers['Content-Type'] = 'application/json';
+    opt.body = JSON.stringify(body);
+  }
+  const r = await fetch(path, opt);
+  let d = {};
+  try { d = await r.json(); } catch (e) {}
+  if (r.status === 401) { showGate('口令不对'); throw new Error('401'); }
+  if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  return d;
+}
+
+function showGate(err) {
+  $('#gate').classList.remove('hide');
+  if (err) { const e = $('#gateErr'); e.textContent = err; e.classList.remove('hide'); }
+}
+function saveToken() {
+  const v = $('#tokenInput').value.trim();
+  if (!v) return;
+  TOKEN = v;
+  localStorage.setItem(LS, v);
+  $('#gate').classList.add('hide');
+  refresh().catch(e => log('口令校验失败：' + e.message, 'e'));
+}
+
+async function refresh() {
+  const st = await api('/api/kb/state');
+  $('#sDocs').textContent = st.docs;
+  $('#sChunks').textContent = st.chunks;
+  $('#sUp').textContent = st.uploaded;
+  $('#sSrc').textContent = (st.active_sources || []).length;
+  renderDocs(await api('/api/kb/docs'));
+  renderSources(st.sources || []);
+  if (!st.pdf_ready) {
+    log('提示：当前服务端没装 pypdf，PDF 导入会失败（md/txt/docx 不受影响）', 'w');
+  }
+}
+
+function renderDocs(d) {
+  const body = $('#docsBody');
+  const docs = (d.docs || []).slice().sort((a, b) => (b.uploaded ? 1 : 0) - (a.uploaded ? 1 : 0));
+  if (!docs.length) { body.innerHTML = '<tr><td colspan="5" style="color:#7b8798">还没有文档</td></tr>'; return; }
+  body.innerHTML = docs.map(x => `
+    <tr>
+      <td>${esc(x.title || x.doc_id)}<div class="meta">${esc(x.doc_id)}</div></td>
+      <td>${esc(x.source || '')} ${x.uploaded ? '<span class="badge up">上传</span>' : '<span class="badge">内置</span>'}</td>
+      <td>${x.bytes ? (x.bytes / 1024).toFixed(1) + ' KB' : '—'}</td>
+      <td>${esc(x.mtime || x.as_of || '—')}</td>
+      <td>${x.uploaded ? `<button class="mini danger" onclick="delDoc('${esc(x.doc_id)}')">删除</button>` : ''}</td>
+    </tr>`).join('');
+}
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function delDoc(id) {
+  if (!confirm('删除这份文档？删除后不可恢复。\n' + id)) return;
+  try {
+    const r = await api('/api/kb/delete', {doc_id: id});
+    log('已删除 ' + id + '，当前 ' + r.docs + ' 篇', 's');
+    refresh();
+  } catch (e) { log('删除失败：' + e.message, 'e'); }
+}
+
+// ---------- 导入 ----------
+const drop = $('#drop'), fileInput = $('#file');
+drop.onclick = () => fileInput.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('on'); };
+drop.ondragleave = () => drop.classList.remove('on');
+drop.ondrop = e => {
+  e.preventDefault(); drop.classList.remove('on');
+  uploadFiles(e.dataTransfer.files);
+};
+fileInput.onchange = () => { uploadFiles(fileInput.files); fileInput.value = ''; };
+
+function readB64(file) {
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result).split(',')[1] || '');
+    fr.onerror = rej;
+    fr.readAsDataURL(file);
+  });
+}
+
+async function uploadFiles(files) {
+  const tags = $('#upTags').value.trim();
+  for (const f of files) {
+    log('上传中：' + f.name + '（' + (f.size / 1024).toFixed(0) + ' KB）');
+    try {
+      const b64 = await readB64(f);
+      const r = await api('/api/kb/upload', {filename: f.name, data: b64, tags});
+      log('成功：' + r.title + '（' + r.kind + '，' + r.chars + ' 字）', 's');
+    } catch (e) {
+      log('失败：' + f.name + ' — ' + e.message, 'e');
+    }
+  }
+  refresh();
+}
+
+async function importText() {
+  const title = $('#txtTitle').value.trim(), text = $('#txtBody').value.trim(),
+        tags = $('#txtTags').value.trim();
+  if (!text) return log('正文为空', 'e');
+  try {
+    const r = await api('/api/kb/text', {title, text, tags});
+    log('成功：' + r.title + '（' + r.chars + ' 字）', 's');
+    $('#txtBody').value = ''; $('#txtTitle').value = '';
+    refresh();
+  } catch (e) { log('导入失败：' + e.message, 'e'); }
+}
+
+async function importUrl() {
+  const url = $('#url').value.trim(), tags = $('#urlTags').value.trim();
+  if (!url) return log('URL 为空', 'e');
+  log('抓取中：' + url);
+  try {
+    const r = await api('/api/kb/url', {url, tags});
+    log('成功：' + r.title + '（' + r.chars + ' 字）', 's');
+    $('#url').value = '';
+    refresh();
+  } catch (e) { log('抓取失败：' + e.message, 'e'); }
+}
+
+// ---------- MCP 源 ----------
+let SRC = [];
+function renderSources(list) {
+  SRC = (list || []).map(s => Object.assign({}, s));
+  const box = $('#srcRows');
+  box.innerHTML = '';
+  if (!SRC.length) {
+    box.innerHTML = '<div style="font-size:12.5px;color:#7b8798;padding:6px 0">还没有外部源，当前只用本地文档库。</div>';
+  }
+  SRC.forEach((s, i) => { box.appendChild(srcRow(s, i)); });
+}
+
+function srcRow(s, i) {
+  const d = document.createElement('div');
+  d.className = 'src-row';
+  d.innerHTML = `
+    <input type="text" value="${esc(s.name)}" placeholder="名称" oninput="upd(${i},'name',this.value)">
+    <input type="text" value="${esc(s.url)}" placeholder="https://host/mcp" oninput="upd(${i},'url',this.value)">
+    <input type="text" value="${esc(s.token)}" placeholder="Bearer Token" oninput="upd(${i},'token',this.value)">
+    <input type="number" step="0.1" min="0.1" max="5" value="${s.weight ?? 1}" oninput="upd(${i},'weight',this.value)">
+    <label style="margin:0;display:flex;align-items:center;gap:5px">
+      <input type="checkbox" ${s.enabled === false ? '' : 'checked'} onchange="upd(${i},'enabled',this.checked)"> 启用
+    </label>
+    <div style="display:flex;gap:4px">
+      <button class="mini" onclick="testSrc(${i})">测试</button>
+      <button class="mini danger" onclick="dropSrc(${i})">删</button>
+    </div>`;
+  return d;
+}
+
+function upd(i, k, v) { SRC[i][k] = v; }
+function addSrcRow() {
+  SRC.push({name: '源' + (SRC.length + 1), url: '', token: '', weight: 1, enabled: true});
+  const box = $('#srcRows');
+  if (SRC.length === 1) box.innerHTML = '';
+  box.appendChild(srcRow(SRC[SRC.length - 1], SRC.length - 1));
+}
+function dropSrc(i) { SRC.splice(i, 1); renderSources(SRC); }
+
+async function testSrc(i) {
+  const s = SRC[i];
+  if (!s.url) return log('先填 URL', 'e');
+  log('测试 ' + s.url + ' …');
+  try {
+    const r = await api('/api/kb/sources/test', {url: s.url, token: s.token});
+    log((r.ok ? '连通：' : '不通：') + JSON.stringify(r.result).slice(0, 200), r.ok ? 's' : 'e');
+  } catch (e) { log('测试失败：' + e.message, 'e'); }
+}
+
+async function saveSources() {
+  const clean = SRC.filter(s => (s.url || '').trim());
+  try {
+    const r = await api('/api/kb/sources', {sources: clean});
+    log('已保存 ' + r.sources.length + ' 个源，生效：' + ((r.active || []).join('、') || '仅本地库'), 's');
+    refresh();
+  } catch (e) { log('保存失败：' + e.message, 'e'); }
+}
+
+// ---------- 启动 ----------
+if (!TOKEN) showGate();
+else refresh().catch(() => showGate('口令已失效，请重新输入'));
+</script>
+</body>
+</html>
