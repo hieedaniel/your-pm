@@ -23,6 +23,7 @@
 `config.json` 从仓库里的 `config.example.json` 复制一份改：
 
 ```bash
+# 仓库名 your-pm，这里落到 /opt/qieshen-live 目录，下文路径都按这个目录写
 git clone https://github.com/hieedaniel/your-pm.git /opt/qieshen-live
 cd /opt/qieshen-live
 cp config.example.json config.json
