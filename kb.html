@@ -342,6 +342,7 @@ function srcRow(s, i) {
     </label>
     <div style="display:flex;gap:4px">
       <button class="mini" onclick="testSrc(${i})">测试</button>
+      <button class="mini" onclick="searchSrc(${i})">试检索</button>
       <button class="mini danger" onclick="dropSrc(${i})">删</button>
     </div>`;
   return d;
@@ -362,8 +363,36 @@ async function testSrc(i) {
   log('测试 ' + s.url + ' …');
   try {
     const r = await api('/api/kb/sources/test', {url: s.url, token: s.token});
-    log((r.ok ? '连通：' : '不通：') + JSON.stringify(r.result).slice(0, 200), r.ok ? 's' : 'e');
+    const res = r.result || {};
+    if (r.ok) {
+      const names = (res.tools || []).map(t => t.name);
+      log('连通' + (res.server ? ' · ' + res.server : '') + ' · 工具 ' + res.tools_count +
+          ' 个：' + names.join('、') + (names.length ? '' : '（没暴露工具，不能当知识源）'), 's');
+    } else {
+      log('不通：' + (res.error || '') + (res.hint ? ' · ' + res.hint : ''), 'e');
+    }
   } catch (e) { log('测试失败：' + e.message, 'e'); }
+}
+
+// 「连得上」和「能用」是两件事：这里用真实问题走一遍检索，
+// 看它认到哪个工具、返回什么内容——配完立刻知道能不能出卡。
+async function searchSrc(i) {
+  const s = SRC[i];
+  if (!s.url) return log('先填 URL', 'e');
+  const q = prompt('用哪句话试检索？（对接完成后，这句话应该能检索到内容）',
+                   '访客怎么登记，前台老是打电话没人接');
+  if (!q) return;
+  log('试检索：' + q);
+  try {
+    const r = await api('/api/kb/sources/search-test', {url: s.url, token: s.token, query: q});
+    if (r.ok) {
+      log('检索工具 ' + (r.tool || '?') + ' · 命中 ' + r.hits.length + ' 条：', 's');
+      r.hits.forEach(h => log('· [' + h.score + '] ' + h.title + ' — ' + h.snippet.slice(0, 60)));
+    } else {
+      log('没命中：' + (r.error || r.hint || '未知原因'), 'e');
+      if (r.tool) log('认到的检索工具：' + r.tool);
+    }
+  } catch (e) { log('试检索失败：' + e.message, 'e'); }
 }
 
 async function saveSources() {

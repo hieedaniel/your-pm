@@ -241,6 +241,35 @@ tar -czf kb-backup-$(date +%F).tgz -C /opt/qieshen-live data/
 - 一个源都没配时，只用本地文档库，行为与之前完全一致
 - 配置落在 `data/kb/_mcp_sources.json`，优先级高于 `config.json` 里的 `mcp.sources`
 
+**工具名不用猜**：各家知识库暴露的工具名不一样（`docs.search` / `knowledge_search` /
+`kb_query`…）。客户端会自动枚举 `tools/list`，挑出最像「检索」的那个，并按它的
+`inputSchema` 把 `query` / `top_k` / `lang` 映射成对方要的字段名；返回结构也做了收敛
+（`hits` / `results` / `items` / `data.list`…，标题取 `title`/`doc_name`，正文取
+`snippet`/`content`/`chunk`）。所以接一个新源通常不用改代码。
+
+两个按钮的分工：
+
+| 按钮 | 验证什么 | 什么时候用 |
+|---|---|---|
+| 测试 | 握手 + `tools/list`：这个地址是不是 MCP、要什么凭据、有哪些工具 | 填完 URL 先点这个 |
+| 试检索 | 拿一句真实客户话走完整检索：认到哪个工具、命中什么 | 「测试通过但没卡片」时点这个 |
+
+以资料中心为例（内网地址，需公司网络/VPN）：
+
+```text
+URL   : https://newdims.uniview.com/request/mcp-svc/mcp
+Token : 资料中心签发的访问令牌（走 Authorization: Bearer，不是 URL 参数、不是 X-Api-Key）
+```
+
+命令行等价：
+
+```bash
+T=$(cat /opt/qieshen-live/data/.admin_token)
+curl -s -H "X-Admin-Token: $T" -H 'Content-Type: application/json' \
+  -d '{"url":"https://newdims.uniview.com/request/mcp-svc/mcp","token":"<令牌>","query":"访客怎么登记"}' \
+  localhost:19535/api/kb/sources/search-test | python3 -m json.tool
+```
+
 ### 配了 MCP 但主题识别不出来 / 不给提示？
 
 先跑自检，别猜：

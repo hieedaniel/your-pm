@@ -580,6 +580,22 @@ async def selfcheck():
             actions.append("远程源报错已自动回退本地知识库（不影响出卡）；"
                            "要去掉这条警告，去 /kb 停用出错的源或查它的 URL/Token")
 
+    # 远程源到底把哪个工具当「检索」用：配了 MCP 却没结果时，这是第一个要看的东西
+    detail = []
+    for n in SOURCE_CLIENTS:
+        item = {"name": n["name"], "info": n["client"].info()}
+        if hasattr(n["client"], "search_tool_info"):
+            st = n["client"].search_tool_info() or {}
+            if st.get("name"):
+                item["search_tool"] = st["name"]
+            elif st.get("error"):
+                item["search_tool_error"] = st["error"]
+                verdict.append({"level": "warn",
+                                "text": "源「%s」还没认出检索工具" % n["name"],
+                                "detail": st["error"]})
+                actions.append("去 /kb 对应源点「试检索」：它会直接说出认到的工具名与报错")
+        detail.append(item)
+
     return {
         "ok": not any(v["level"] == "error" for v in verdict),
         "build": {"sha": build_sha, "built_at": build_at},
@@ -587,8 +603,7 @@ async def selfcheck():
         "rule": rule,
         "extractor": ex_info,
         "sources": active,
-        "source_detail": [{"name": n["name"], "info": n["client"].info()}
-                          for n in SOURCE_CLIENTS],
+        "source_detail": detail,
         "search_stats": SEARCH.stats() if hasattr(SEARCH, "stats") else {},
         "probe": probe,
         "samples": samples,
@@ -757,6 +772,47 @@ async def kb_api(p: str, method: str, u, headers, body: bytes):
             return 400, {"ok": False, "error": "url 为空"}
         r = await probe_mcp(url, tok, 8.0)
         return 200, {"ok": bool(r.get("ok")), "result": r}
+
+    if p == "/api/kb/sources/search-test" and method == "POST":
+        # 「连得上」不等于「能用」：这里拿真实问题走一遍自适应检索，
+        # 直接把认到的工具名和命中内容显示出来，省掉「配了但没结果」的来回。
+        d = payload()
+        url = (d.get("url") or "").strip()
+        tok = (d.get("token") or "").strip()
+        query = (d.get("query") or "").strip() or "访客怎么登记"
+        if not url:
+            return 400, {"ok": False, "error": "url 为空"}
+        client = McpClient({"transport": "http", "timeout_ms": 8000,
+                            "http": {"url": url, "token": tok}})
+        try:
+            res = await asyncio.wait_for(client.search_auto(
+                {"query": query, "top_k": 3, "lang": "zh-CN"}), 12.0)
+        except Exception as e:
+            return 200, {"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:160]),
+                         "hint": "12 秒内没返回：确认该地址在服务器上可达"}
+        hits = res.get("hits") or []
+        err = res.get("error", "")
+        if hits:
+            hint = ""
+        elif not err:
+            hint = "工具返回了但内容为空：换个问法，或用它自己的术语（它的索引可能不是你们的说法）"
+        elif "令牌" in err or "Token" in err or "token" in err:
+            hint = "先把这个源的访问令牌填进「Bearer Token」再试"
+        elif "工具枚举为空" in err:
+            hint = "这个地址没有可枚举的工具：确认它不是网页地址，且令牌已填"
+        elif "没有看起来像" in err:
+            hint = "它确实没有检索类工具：这个源只能当业务系统用，不能当知识库"
+        else:
+            hint = "看 error 原文；URL 后缀、鉴权头、令牌作用域都是常见原因"
+        return 200, {
+            "ok": bool(hits),
+            "tool": res.get("tool") or (client.search_tool_info() or {}).get("name", ""),
+            "query": query,
+            "hits": [{"title": h["title"], "snippet": h["snippet"][:160],
+                      "score": h["score"], "visibility": h["visibility"]} for h in hits[:3]],
+            "error": err,
+            "hint": hint,
+        }
 
     return 404, {"ok": False, "error": "未知接口 %s" % p}
 
