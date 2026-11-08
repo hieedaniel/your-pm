@@ -103,6 +103,12 @@ class Orchestrator:
 
         self.topic_lat.append((time.perf_counter() - t0) * 1000)
         self.last_topic = topic
+        push_ok = bool(topic.get("should_push", True))
+        # 为什么没推：前端只显示「本轮抑制推送」等于让人猜。把原因一起发过去，
+        # 现场看到「主题表为空」「寒暄」能立刻分清是配置问题还是这句话本来就不该推。
+        why = "" if push_ok else (topic.get("push_reason")
+                                  or ("寒暄 / 无有效内容" if topic.get("intent") == "chitchat"
+                                      else "无有效主题"))
         await self.emit("topic", {
             "turn_id": turn_id, "lang": topic.get("lang", lang),
             "query": topic.get("query", ""),
@@ -111,14 +117,15 @@ class Orchestrator:
             "provider": topic.get("provider", "rule"),
             "degraded": topic.get("degraded", False),
             "degrade_reason": topic.get("degrade_reason", ""),
-            "should_push": topic.get("should_push", True),
+            "should_push": push_ok,
+            "reason": why,
             "latency_ms": round((time.perf_counter() - t0) * 1000, 1),
         })
         self.topic_count += 1
 
-        if not topic.get("should_push", True):
+        if not push_ok:
             await prefetch_ready.wait()
-            await self._silence(turn_id, "寒暄 / 无有效主题，抑制推送")
+            await self._silence(turn_id, (why + "，抑制推送") if why else "寒暄 / 无有效主题，抑制推送")
             await self._emit_stats()
             return
 
@@ -145,8 +152,12 @@ class Orchestrator:
                                (refined or {}).get("hits") or [])
             if not hits:
                 # 粗卡已出但精检无命中：降级而非删除，不打断销售正在看的内容
+                errs = list(getattr(self.mcp, "last_errors", []) or [])
                 await self._demote_all(turn_id, t0, st, "精检无命中，仅按原文匹配")
-                await self._silence(turn_id, "MCP 文档无命中")
+                # 把最后一个源错误带出来：远程源挂了和「资料里真没有」是两件事，
+                # 现场看到「MCP 连接超时」就不用去翻知识库了。
+                await self._silence(turn_id, "MCP 文档无命中"
+                                    + ("：" + errs[-1][:70] if errs else ""))
                 await self._emit_stats()
                 return
             await self._deliver(turn_id, t0, hits, topic, False, st)

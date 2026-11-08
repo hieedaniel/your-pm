@@ -76,6 +76,16 @@ python server.py          # 读 config.json，默认 127.0.0.1:8780
 **本地知识库永远是基线源**：配了 MCP 之后，本地 19 篇 + 上传文档仍参与检索并按权重合并。
 远程源连不上、或工具名不是 `docs.search` 时，卡片照常由本地资料兜住，不会「一配 MCP 就全空」。
 
+**主题空 / 卡片不出，先跑自检**：页面左侧「全链路自检」按钮，或
+
+```bash
+curl -s localhost:19535/api/selfcheck | python3 -m json.tool
+```
+
+它按「配置 → 词典 → 主题 → 检索」四层跑，返回镜像版本（`build.sha`，为空即旧镜像）、
+主题表主题数、规则词典条数、三句真实客户话的实测主题、一次真检索结果，
+以及 `verdict` / `actions` 两句人话结论——不用再靠猜。
+
 上传的文档与配置都在 `data/`（compose 已挂载，含重建出来的 `taxonomy.json`），
 `docs-kaiyi/` 内置 19 篇只读。PDF 解析需要 `pypdf`（`requirements.txt` 唯一依赖），其余全部标准库。
 

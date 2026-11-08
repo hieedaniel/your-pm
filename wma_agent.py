@@ -347,6 +347,8 @@ def normalize(obj: dict | None, provider: str, degraded: bool, text: str) -> dic
         "query": query[:160], "topics": topics[:5],
         "intent": str(obj.get("intent") or "general"),
         "should_push": push,
+        "push_reason": str(obj.get("push_reason") or ""),
+        "degrade_reason": str(obj.get("degrade_reason") or ""),
         "dropped_topics": dropped,
         "provider": provider, "degraded": degraded,
     }
@@ -384,6 +386,21 @@ class RuleExtractor:
                 for a in al:
                     self._terms.append((_squash(a), label, 0.9))
 
+    def info(self) -> dict:
+        """自检用：一眼看出规则到底有几个词可用。
+
+        「主题全空」线上最常见的两种成因——主题表没加载（rows=0）、
+        词典为空（terms=0）——在这里是能直接看见的数字，不用去猜。
+        """
+        say = sum(len([x for x in (r.get("say") or []) if len(str(x).strip()) >= 2])
+                  for r in self.rows)
+        tag = sum(len([x for x in (r.get("tags") or []) if len(str(x).strip()) >= 2])
+                  for r in self.rows)
+        return {"rows": len(self.rows), "terms": len(self._terms),
+                "from_label": len([r for r in self.rows if r.get("label")]),
+                "from_say": say, "from_tags": tag,
+                "aliases": len(self.vocab.get("aliases") or {})}
+
     async def extract(self, text: str, context: dict | None = None):
         raw = (text or "").strip()
         low = raw.lower()
@@ -397,6 +414,16 @@ class RuleExtractor:
             return normalize({"lang": lang, "query": "", "topics": [],
                               "intent": "chitchat", "should_push": False},
                              self.provider, False, raw)
+
+        # 词典为空（主题表没加载成功）时绝不能整轮静默：没有主题照样能按原话检索，
+        # 卡片自己带标题和结论，主题只是标签。静默会把「主题表坏了」伪装成
+        # 「服务全停了」，现场只能靠猜。
+        if not self._terms:
+            return normalize({"lang": lang, "query": hay.strip() or raw,
+                              "topics": [], "intent": "general",
+                              "should_push": bool(raw),
+                              "degrade_reason": "主题表为空（词典 0 条），仅按原话检索"},
+                             self.provider, True, raw)
 
         # 命中即累加到对应主题，同一主题取权重最高的那个词当证据
         best = {}

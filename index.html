@@ -138,6 +138,7 @@
       <span class="chip" id="c-asr">ASR —</span>
       <span class="chip" id="c-wma">WMA —</span>
       <span class="chip" id="c-mcp">MCP —</span>
+      <span class="chip" id="c-tax">主题表 —</span>
       <span class="chip" id="c-docs">文档 —</span>
       <span class="chip" id="c-sse">SSE 连接中</span>
       <span class="chip" id="c-ws">音频未连接</span>
@@ -189,9 +190,11 @@
         <div class="filerow" style="margin-top:6px">
           <button class="ghost" id="btn-probe" style="font-size:12px;padding:7px 9px">检测豆包密钥</button>
           <button class="ghost" id="btn-wma" style="font-size:12px;padding:7px 9px">检测 WMA 凭据</button>
+          <button class="ghost" id="btn-selfcheck" style="font-size:12px;padding:7px 9px">全链路自检</button>
         </div>
         <div class="diag warn" id="probeout" style="display:none"></div>
         <div class="diag warn" id="wmaout" style="display:none"></div>
+        <div class="diag" id="selfout" style="display:none"></div>
 
         <label>手动注入话轮（联调 / 无麦克风）</label>
         <input type="text" id="turn" placeholder="例如：灵犀Pro能内置5G模组吗？回车发送">
@@ -325,7 +328,21 @@ async function loadState() {
       esc(sh.resource_id || '—') + '<br>StreamMode ' + (sh.stream_mode ?? 0) +
       ' · ' + esc(sh.auth_mode || '—') + ' · 项目 ' + esc(sh.project || '未填');
     chip('c-wma', 'WMA ' + (s.wma.provider || '—'), s.wma.provider === 'rule' ? 'warn' : 'on');
-    chip('c-mcp', 'MCP ' + (s.mcp.transport || '—'), 'on');
+    // MCP chip 原来读 state.mcp.transport（新状态里没有这个字段）→ 永远显示「MCP —」，
+    // 看起来像没连上。改成读真实生效的源数量与适配器。
+    const act = (s.mcp && s.mcp.active) || [];
+    const ad = (s.mcp && s.mcp.adapter) || 'none';
+    chip('c-mcp', act.length > 1 ? ('MCP ' + act.length + ' 源')
+              : (act.length === 1 && ad !== 'local' ? 'MCP 远端' : 'MCP 本地'),
+         act.length ? 'on' : 'warn');
+    $('c-mcp').title = act.length
+      ? act.map(x => x.name + (x.adapter && x.adapter !== 'none' ? '（' + x.adapter + '）' : '')).join('\n')
+      : '没有生效的检索源';
+    const tax = s.taxonomy || {};
+    chip('c-tax', '主题表 ' + (tax.topics || 0) + ' 个',
+         (tax.topics || 0) ? 'on' : 'warn');
+    if (tax.path) $('c-tax').title = '主题表：' + tax.path +
+      '\n规则词典 ' + (tax.terms || 0) + ' 条' + (s.build && s.build.sha ? '\n镜像 ' + s.build.sha : '');
     chip('c-docs', '文档 ' + s.docs.length + ' 篇 / ' + s.chunks + ' 块');
     log('配置已加载：' + label + ' · 热词 ' + a.hotwords + ' 条');
     (v.errors || []).forEach(e => log('自检错误：' + e, 'e'));
@@ -712,6 +729,52 @@ async function probeWma() {
 }
 $('btn-wma').addEventListener('click', probeWma);
 
+// ---------------- 全链路自检 ----------------
+// 「主题空 / 卡片不出」的排查顺序固定为：配置 → 词典 → 主题 → 检索。
+// 每一项都直接用真实代码跑，不再靠猜配置。
+async function selfcheck() {
+  const box = $('selfout');
+  box.style.display = 'block';
+  box.className = 'diag warn';
+  box.textContent = '正在跑全链路自检（含三句真实例句 + 一次检索）…';
+  $('btn-selfcheck').disabled = true;
+  try {
+    const r = await (await fetch('/api/selfcheck')).json();
+    const ico = {ok: '✔', warn: '!', error: '✘'};
+    const lines = (r.verdict || []).map(v =>
+      '<div style="margin:3px 0">' + (ico[v.level] || '·') + ' <b>' + esc(v.text) + '</b>' +
+      (v.detail ? '<div style="opacity:.78;margin-left:14px">' + esc(v.detail) + '</div>' : '') +
+      '</div>').join('');
+    const samp = (r.samples || []).map(s =>
+      '<div style="opacity:.8;margin-left:14px">「' + esc(s.text.slice(0, 18)) + '…」→ ' +
+      (s.topics && s.topics.length ? esc(s.topics.join(' / ')) : '<span style="opacity:.7">无主题</span>') +
+      ' · ' + s.ms + 'ms</div>').join('');
+    const acts = (r.actions || []).length
+      ? '<div style="margin-top:8px"><b>下一步</b>' +
+        (r.actions || []).map(a => '<div style="margin-left:14px">· ' + esc(a) + '</div>').join('') + '</div>'
+      : '';
+    box.className = 'diag ' + (r.ok ? 'ok' : 'bad');
+    box.innerHTML =
+      '<b>' + (r.ok ? '✔ 自检通过' : '✘ 自检发现问题') + '</b> · ' +
+      esc(r.now || '') + (r.build && r.build.sha ? ' · 镜像 <code>' + esc(r.build.sha) + '</code>'
+        : ' · <span style="color:#c05621">镜像无版本号（旧镜像）</span>') +
+      '<div style="margin-top:6px">' + lines + '</div>' +
+      (samp ? '<div style="margin-top:6px"><b>例句实测</b>' + samp + '</div>' : '') +
+      acts;
+    log('自检' + (r.ok ? '通过' : '发现问题') + '：' +
+        (r.verdict || []).filter(v => v.level !== 'ok').map(v => v.text).join(' / ') || '全部正常',
+        r.ok ? '' : 'w');
+    loadState();
+  } catch (e) {
+    box.className = 'diag bad';
+    box.textContent = '自检请求失败：' + ((e && e.message) || e) +
+      '（404 说明服务器还是旧镜像，先 docker compose pull）';
+  } finally {
+    $('btn-selfcheck').disabled = false;
+  }
+}
+$('btn-selfcheck').addEventListener('click', selfcheck);
+
 // ---------------- 话轮注入 ----------------
 async function sendTurn(text, speaker='客户', lang=null) {
   text = (text || '').trim();
@@ -766,9 +829,15 @@ function onFinal(d) {
 function onTopic(d) {
   $('topic-empty').style.display = 'none';
   $('topic-content').style.display = 'block';
-  $('topic-query').textContent = d.should_push ? ('检索主题：' + d.query) : '（本轮抑制推送）';
-  $('topic-pills').innerHTML = (d.topics || []).map(t =>
-    '<span class="tpill">' + esc(t.label) + ' · ' + esc(t.kind) + ' ' + t.confidence + '</span>').join('');
+  // 只说「抑制推送」等于让人猜原因：把后端给的 reason 一起显示。
+  // 主题没匹配上但照常检索时，也要说清楚「不是没工作」，而是按原话检索。
+  $('topic-query').textContent = d.should_push
+    ? ('检索主题：' + d.query)
+    : ('（本轮抑制推送' + (d.reason ? '：' + d.reason : '') + '）');
+  const pills = (d.topics || []).map(t =>
+    '<span class="tpill">' + esc(t.label) + ' · ' + esc(t.kind) + ' ' + t.confidence + '</span>');
+  $('topic-pills').innerHTML = pills.length ? pills.join('')
+    : '<span class="tpill" style="opacity:.75">主题未匹配 · 按原话检索</span>';
   $('topic-meta').innerHTML = 'provider <b>' + esc(d.provider) + '</b> · ' + d.latency_ms + 'ms · intent ' +
     esc(d.intent) + (d.degraded ? ' <span class="deg">· 降级：' + esc(d.degrade_reason || '') + '</span>' : '');
 }

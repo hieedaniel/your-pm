@@ -17,6 +17,13 @@ ENV PYTHONUNBUFFERED=1 \
     QS_KB_DIR=/app/data/kb \
     TZ=Asia/Shanghai
 
+# 构建版本号：自检里能直接看到「跑的是哪一版镜像」。
+# 没有它，线上排查第一件事就要靠猜「我到底拉没拉到新镜像」。
+ARG GIT_SHA=""
+ARG GIT_BUILD_AT=""
+ENV QS_BUILD_SHA=${GIT_SHA} \
+    QS_BUILD_AT=${GIT_BUILD_AT}
+
 WORKDIR /app
 
 # 依赖单独一层：改代码不必重装依赖，改依赖也不必重传全部源码

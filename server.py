@@ -12,6 +12,7 @@
     WS   /audio            音频上行（binary 200ms PCM + text 控制帧）
     GET  /events           SSE 事件流（字幕 / 主题 / 提示卡 / audio.stats / 状态）
     GET  /api/state        当前配置与统计
+    GET  /api/selfcheck    全链路自检（主题表 / 规则词典 / 例句 / 检索源）
     GET  /api/probe        真实豆包握手探测（密钥 + Resource ID 是否可用）
     GET  /api/wma-probe    WMA 控制面探测（企业 ID + pt_/ck_ 凭据 + 服务是否开通）
     GET  /api/tools        MCP tools/list
@@ -248,9 +249,19 @@ def _apply_taxonomy(path: str) -> dict:
 
     只动 VOCAB，不重建 EXTRACTOR：调用方自己决定要不要换提取器，
     否则每次改表都会把云端会话重建一遍。
+
+    生成的表若坏了（空文件 / JSON 截断），不能就这么算了：调用方以为「已经
+    灌进去了」，规则词典实际只剩几条别名，主题从此全空。这里退回到仓库里
+    那份手写表——有表总比没表好，坏表的存在感应该只出现在日志里。
     """
     tax = load_taxonomy(path)
     if not tax.get("topics"):
+        repo = os.path.join(ROOT, "prompts", "taxonomy.json")
+        if os.path.abspath(path) != os.path.abspath(repo):
+            print(" [警告] 主题表 %s 没有可用主题，回退到仓库自带表" % path)
+            tax = load_taxonomy(repo)
+    if not tax.get("topics"):
+        print(" [警告] 主题表为空：本地规则将无法识别主题（卡片仍按原话检索）")
         return tax
     VOCAB["topics"] = tax["topics"]
     bucket = VOCAB.setdefault("aliases", {})
@@ -319,6 +330,13 @@ def bootstrap():
     # 结果就是「主题空 → 不推卡」——线上看起来像整个服务停了。
     _apply_taxonomy(active_taxonomy_path())
     EXTRACTOR = build_extractor(CFG["wma"], VOCAB)
+    # 启动就把「主题表几个主题 / 规则几个词」打进日志：出问题第一眼看 docker logs
+    _ri = _rule_info(EXTRACTOR)
+    print(" 主题/规则   : 主题表 %d 个 · 规则词典 %d 条（label %d / say %d / tags %d）" %
+          (len(VOCAB.get("topics") or []), _ri.get("terms", 0), _ri.get("from_label", 0),
+           _ri.get("from_say", 0), _ri.get("from_tags", 0)))
+    print(" 主题来源    : %s" % active_taxonomy_path())
+    print(" 镜像版本    : %s" % (os.environ.get("QS_BUILD_SHA", "")[:12] or "未知（旧镜像）"))
 
     orch_cfg = dict(mcfg)
     orch_cfg["policy"] = CFG["policy"]
@@ -413,7 +431,172 @@ def state():
         "chunks": len(LOCAL.store.chunks) if (LOCAL and CFG["mcp"].get("adapter") != "perf") else 0,
         "sessions": len(SESSIONS),
         "stats": ORCH.stats() if ORCH else {},
+        # 主题表在页面上直接可见：主题全空时第一眼看的就是这个数字
+        "taxonomy": {"topics": len(VOCAB.get("topics") or []),
+                     "terms": len(getattr(EXTRACTOR, "_terms", []) or []),
+                     "path": active_taxonomy_path()},
+        "build": {"sha": os.environ.get("QS_BUILD_SHA", "")[:12]},
         "policy": CFG["policy"],
+    }
+
+
+# --------------------------------------------------------------------------
+# 自检：一条请求回答「主题为什么空 / 卡片为什么不出」
+# --------------------------------------------------------------------------
+SELFCHECK_SAMPLES = [
+    "我们园区现在访客登记还是前台打电话，没人接就很麻烦",
+    "有没有智慧宿舍的解决方案？",
+    "摄像头夜里看不清，有人翻墙也发现不了",
+]
+
+
+def _rule_info(ex) -> dict:
+    """把规则词典的规模挖出来（可能包在 Resilient 里）。"""
+    for cand in (ex, getattr(ex, "fallback", None)):
+        if cand is not None and hasattr(cand, "info"):
+            try:
+                return cand.info()
+            except Exception:
+                pass
+    return {}
+
+
+def _read_taxonomy_file(path: str) -> dict:
+    """只读文件、不碰 wma_agent 的全局表——自检不该有副作用。"""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        return {"ok": False, "error": "%s: %s" % (type(e).__name__, str(e)[:80])}
+    rows = [t for t in (data.get("topics") or []) if str(t.get("label") or "").strip()]
+    return {"ok": True, "topics": len(rows), "source": data.get("source", ""),
+            "generated": data.get("generated", 0),
+            "labels": [t["label"] for t in rows[:8]],
+            "sample_says": [s for t in rows for s in (t.get("say") or [])][:8]}
+
+
+async def selfcheck():
+    """按「配置 → 词典 → 主题 → 检索」四层依次体检，每层都给出可执行的下一步。"""
+    verdict, actions = [], []
+    gen_path = KB.taxonomy_path(KB_DIR)
+    tax_path = active_taxonomy_path()
+    tax = _read_taxonomy_file(tax_path)
+    rule = _rule_info(EXTRACTOR)
+    ex_info = extractor_info(EXTRACTOR)
+
+    build_sha = os.environ.get("QS_BUILD_SHA", "")[:12]
+    build_at = os.environ.get("QS_BUILD_AT", "")
+    if not build_sha:
+        verdict.append({"level": "warn", "text": "镜像是旧版（没有构建版本号）",
+                        "detail": "带版本号的镜像会显示 40 位 commit 前 12 位；"
+                                  "为空说明这台服务器跑的还不是最新构建。"})
+        actions.append("docker compose pull && docker compose up -d（先拉到新镜像再看自检）")
+
+    # ① 主题模型
+    if ex_info.get("provider") == "rule":
+        verdict.append({"level": "warn", "text": "主题走本地规则（WMA 主题模型未接入）",
+                        "detail": "wma.provider 为 rule/auto 且云端不可用时会落到这里；"
+                                  "提示词侧的主题不会出现，但本地规则照样能识别。"})
+    else:
+        verdict.append({"level": "ok", "text": "主题模型：%s" % ex_info.get("provider"),
+                        "detail": "降级次数 %s · 最近错误 %s" %
+                                  (ex_info.get("degraded_count"), ex_info.get("last_error") or "无")})
+
+    # ② 主题表 + 规则词典：这两层任一为空，主题必然全空
+    if not tax.get("ok"):
+        verdict.append({"level": "error", "text": "主题表读不出来",
+                        "detail": "%s（%s）" % (tax.get("error"), tax_path)})
+        actions.append("去 /kb 点「按知识库重建主题表」，或恢复仓库里的 prompts/taxonomy.json")
+    elif not tax.get("topics"):
+        verdict.append({"level": "error", "text": "主题表里 0 个主题",
+                        "detail": "文件在（%s）但内容为空" % tax_path})
+        actions.append("去 /kb 点「按知识库重建主题表」")
+    else:
+        verdict.append({"level": "ok", "text": "主题表 %d 个主题" % tax["topics"],
+                        "detail": "%s · %s" % (tax_path,
+                                               "按知识库生成" if gen_path == tax_path else "仓库内置")})
+    if rule.get("terms"):
+        verdict.append({"level": "ok", "text": "规则词典 %d 条（label %d · say %d · tags %d）" %
+                        (rule["terms"], rule.get("from_label", 0),
+                         rule.get("from_say", 0), rule.get("from_tags", 0)), "detail": ""})
+    else:
+        verdict.append({"level": "error", "text": "规则词典 0 条：本地规则不可能识别出任何主题",
+                        "detail": "主题表没被灌进 VOCAB（旧镜像或加载失败）"})
+        actions.append("确认镜像版本：自检里 build.sha 为空 = 旧镜像，先拉新镜像")
+
+    # ③ 拿真实例句跑一遍：数字之外还要看到「这句话到底出什么主题」
+    samples = []
+    for s in SELFCHECK_SAMPLES:
+        t0 = time.perf_counter()
+        try:
+            r = await asyncio.wait_for(EXTRACTOR.extract(s, {"lang": "zh-CN"}), 6.0)
+        except Exception as e:
+            r = {"topics": [], "should_push": False,
+                 "push_reason": "%s: %s" % (type(e).__name__, str(e)[:60])}
+        samples.append({"text": s, "topics": [x.get("label") for x in (r.get("topics") or [])],
+                        "should_push": bool(r.get("should_push")),
+                        "provider": r.get("provider", ""), "degraded": bool(r.get("degraded")),
+                        "degrade_reason": r.get("degrade_reason", ""),
+                        "query": (r.get("query") or "")[:60],
+                        "ms": round((time.perf_counter() - t0) * 1000, 1)})
+    hit = [x for x in samples if x["topics"]]
+    if not hit:
+        verdict.append({"level": "error", "text": "三句典型客户话，一个主题都没识别出来",
+                        "detail": "词典为空、或主题表里没有这些说法（看 samples 详情）"})
+    elif len(hit) < len(samples):
+        verdict.append({"level": "warn", "text": "%d/%d 句识别出主题" %
+                        (len(hit), len(samples)), "detail": "未命中的说法可补进主题表 say 字段"})
+    else:
+        verdict.append({"level": "ok", "text": "%d/%d 句识别出主题" %
+                        (len(hit), len(samples)), "detail": ""})
+
+    # ④ 检索链路：有主题但检索不到，跟主题空是两种病
+    probe = {"ok": False, "hits": 0, "error": ""}
+    try:
+        res = await asyncio.wait_for(
+            SEARCH.call(ORCH.tool_search if ORCH else "docs.search",
+                        {"query": SELFCHECK_SAMPLES[0], "top_k": 3, "lang": "zh-CN"}), 8.0)
+        hits = (res or {}).get("hits") or []
+        probe = {"ok": bool(hits), "hits": len(hits),
+                 "titles": [h.get("title") for h in hits][:3],
+                 "top_score": hits[0].get("score") if hits else None,
+                 "error": ""}
+    except Exception as e:
+        probe["error"] = "%s: %s" % (type(e).__name__, str(e)[:100])
+    if probe["ok"]:
+        verdict.append({"level": "ok", "text": "检索链路通：样例问题命中 %d 条" % probe["hits"],
+                        "detail": " · ".join(str(x) for x in probe.get("titles") or [])})
+    else:
+        verdict.append({"level": "error", "text": "检索链路无命中",
+                        "detail": probe.get("error") or "查询正常但结果为空：知识库里没有相关内容"})
+        actions.append("去 /kb 看「当前生效源」，远程源报错就临时停用，只留本地知识库")
+
+    active = search_active()
+    errs = list(getattr(SEARCH, "last_errors", []) or [])[-3:]
+    if errs:
+        verdict.append({"level": "warn", "text": "检索源有报错", "detail": " / ".join(errs)})
+        # 有本地基线在，远程源挂掉不影响出卡；但要说清楚这是「降级可用」而非正常
+        if len(active) > 1:
+            actions.append("远程源报错已自动回退本地知识库（不影响出卡）；"
+                           "要去掉这条警告，去 /kb 停用出错的源或查它的 URL/Token")
+
+    return {
+        "ok": not any(v["level"] == "error" for v in verdict),
+        "build": {"sha": build_sha, "built_at": build_at},
+        "taxonomy": dict(tax, path=tax_path, generated_path=gen_path),
+        "rule": rule,
+        "extractor": ex_info,
+        "sources": active,
+        "source_detail": [{"name": n["name"], "info": n["client"].info()}
+                          for n in SOURCE_CLIENTS],
+        "search_stats": SEARCH.stats() if hasattr(SEARCH, "stats") else {},
+        "probe": probe,
+        "samples": samples,
+        "verdict": verdict,
+        "actions": actions,
+        "docs": len(LOCAL.store.docs) if LOCAL else 0,
+        "chunks": len(LOCAL.store.chunks) if LOCAL else 0,
+        "now": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
 
@@ -630,6 +813,9 @@ async def handle_http(writer, method, path, headers, body: bytes):
         writer.write(_resp(code, json.dumps(obj, ensure_ascii=False).encode("utf-8")))
     elif p == "/api/state":
         writer.write(_json(state()))
+    elif p == "/api/selfcheck":
+        # 一条请求回答「主题为什么空 / 卡片为什么不出」：配置 → 词典 → 主题 → 检索
+        writer.write(_json(await selfcheck()))
     elif p == "/api/probe":
         # 真实握手探测：只回答问题「这个 Key + 这个 Resource ID 能不能用」，不发音频
         r = await probe_handshake(CFG["asr"])

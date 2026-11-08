@@ -76,6 +76,11 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # 把 commit 写进镜像：服务器上 /api/selfcheck 能直接看到跑的是哪一版，
+          # 「到底拉没拉到新镜像」不再靠猜。
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            GIT_BUILD_AT=${{ github.event.head_commit.timestamp }}
           # ghcr.io 拉基础镜像偶尔慢，允许重试
           provenance: false
           cache-from: type=gha
@@ -128,12 +133,26 @@ jobs:
             -v "$PWD/config.example.json:/app/config.json:ro" \
             -e QS_CONFIG=/app/config.json "$IMG" || {
               echo "容器启动失败，日志："; docker logs smoke; exit 1; }
+          ok=0
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:19535/api/state >/tmp/state.json; then
-              echo "第 ${i} 次探活成功"; head -c 400 /tmp/state.json; echo; exit 0
+              echo "第 ${i} 次探活成功"; head -c 400 /tmp/state.json; echo; ok=1; break
             fi
             sleep 2
           done
-          echo "60 秒内 /api/state 未就绪，容器日志："
-          docker logs smoke
-          exit 1
+          if [ "$ok" != "1" ]; then
+            echo "60 秒内 /api/state 未就绪，容器日志："
+            docker logs smoke
+            exit 1
+          fi
+          # 自检必须能通：模板配置下主题/检索可能报 warn，但不该 500。
+          # 这一步是「自检接口本身坏了」的回归网。
+          curl -fsS http://127.0.0.1:19535/api/selfcheck > /tmp/self.json
+          python3 - <<'PY'
+          import json
+          d = json.load(open('/tmp/self.json'))
+          print('build:', d.get('build'), '| docs:', d.get('docs'), 'chunks:', d.get('chunks'))
+          print('theme rows:', (d.get('rule') or {}).get('rows'), 'terms:', (d.get('rule') or {}).get('terms'))
+          for v in d.get('verdict') or []:
+              print('[%s] %s' % (v.get('level'), v.get('text')))
+          PY
