@@ -224,18 +224,19 @@ _TAX = {"by_label": {}, "by_id": {}, "by_doc": {}, "topics": [],
         "aliases": {}, "loaded": False}
 
 
-def load_taxonomy(path: str | None = None) -> dict:
-    root = os.path.dirname(os.path.abspath(__file__))
-    p = path or os.path.join(root, "prompts", "taxonomy.json")
-    try:
-        with open(p, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        _TAX.update(loaded=False)
-        return _TAX
-    by_label, by_id, by_doc, rows = {}, {}, {}, []
+def set_taxonomy_rows(rows) -> dict:
+    """用显式主题行重置校验表（不读文件）。
+
+    为什么需要它：校验表（_TAX）决定 normalize 认哪些 label。如果校验表来自
+    仓库自带的 prompts/taxonomy.json，而实际生效的是按知识库重建出来的表，
+    两张表的 label 不一致 → 模型/规则给的主题全被当「自创主题」丢掉，
+    线上表现就是「主题一直空、但卡片有」。两者必须同源。
+    """
+    by_label, by_id, by_doc, clean = {}, {}, {}, []
     aliases = {}          # 主题 label -> [客户实际会说的词]，本地规则匹配用
-    for t in data.get("topics") or []:
+    for t in rows or []:
+        if not isinstance(t, dict):
+            continue
         label = str(t.get("label") or "").strip()
         if not label:
             continue
@@ -247,15 +248,27 @@ def load_taxonomy(path: str | None = None) -> dict:
             by_doc[label] = t["doc_id"]
         say = [str(x).strip() for x in (t.get("say") or []) if str(x).strip()]
         aliases[label] = say
-        rows.append({"id": t.get("id", ""), "label": label,
-                     "kind": t.get("kind") or "general",
-                     "visibility": t.get("visibility", "public"),
-                     "say": say,
-                     "tags": [str(x).strip() for x in (t.get("tags") or [])
-                              if str(x).strip()]})
+        clean.append({"id": t.get("id", ""), "label": label,
+                      "kind": t.get("kind") or "general",
+                      "visibility": t.get("visibility", "public"),
+                      "say": say,
+                      "tags": [str(x).strip() for x in (t.get("tags") or [])
+                               if str(x).strip()]})
     _TAX.update(by_label=by_label, by_id=by_id, by_doc=by_doc,
-                topics=rows, aliases=aliases, loaded=True)
+                topics=clean, aliases=aliases, loaded=bool(clean))
     return _TAX
+
+
+def load_taxonomy(path: str | None = None) -> dict:
+    root = os.path.dirname(os.path.abspath(__file__))
+    p = path or os.path.join(root, "prompts", "taxonomy.json")
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        _TAX.update(loaded=False)
+        return _TAX
+    return set_taxonomy_rows(data.get("topics") or [])
 
 
 def _squash(s: str) -> str:
@@ -752,13 +765,19 @@ def build_extractor(cfg: dict, vocab: dict):
     except OSError:
         prompt = "只输出 JSON：{query, topics[], intent, should_push}。不要输出解释。"
     fallback = RuleExtractor(vocab)
-    # 材料主题表：贴在提示词里的那份是模型「看得见」的，这份是程序「校验用」的。
-    # 两者同源于 *_wma_taxonomy.py*，所以改了资料重跑脚本即可，不用两头改。
-    tax = load_taxonomy()
-    if tax.get("loaded"):
-        print(" 主题表      : %d 个主题（label 强校验已启用）" % len(tax["by_id"]))
+    # 校验表必须跟「实际生效的那张表」同源：知识库重建过的表放在 data/kb，
+    # 这里如果还去读仓库自带的 prompts/taxonomy.json，两边的 label 对不上，
+    # 规则给的主题会被 normalize 当成自创主题整批丢掉——主题空、卡片有。
+    if vocab.get("topics"):
+        tax = set_taxonomy_rows(vocab["topics"])
+        src = "生效主题表（vocab）"
     else:
-        print(" 主题表      : 未找到 prompts/taxonomy.json，label 不做校验")
+        tax = load_taxonomy()
+        src = "prompts/taxonomy.json"
+    if tax.get("loaded"):
+        print(" 校验主题表  : %d 个主题 · 来自%s（label 强校验已启用）" % (len(tax["by_id"]), src))
+    else:
+        print(" 校验主题表  : 未找到，label 不做校验")
     provider = cfg.get("provider", "mock")
     timeout = int(cfg.get("timeout_ms", 2500))
     if provider == "auto":
