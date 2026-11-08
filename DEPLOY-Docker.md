@@ -205,6 +205,15 @@ docker logs qieshen-live | grep 管理页
 ```
 
 compose 里已经挂了 `./data:/app/data`。**不挂这个卷的话，重建容器 = 上传的文档全丢。**
+
+⚠️ 首次部署要先把目录建好并交给容器内的 uid（10001），否则容器写不进去，
+表现是「导入失败」或「管理口令每次重启都变」：
+
+```bash
+mkdir -p /opt/qieshen-live/data
+chown -R 10001:10001 /opt/qieshen-live/data
+```
+
 备份就一句：
 
 ```bash
