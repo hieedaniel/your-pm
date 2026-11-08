@@ -1,4 +1,4 @@
-# 切身产品经理 · 实时音频链路
+# 贴身产品经理 · 实时音频链路
 # 部署：把整个 qieshen-live/ 目录拷到服务器，然后 docker compose up -d --build
 # 改端口 / 改绑定地址不用动文件：BIND_ADDR=0.0.0.0 docker compose up -d
 services:

@@ -64,7 +64,7 @@ jobs:
             type=sha,prefix=sha-,format=short
           labels: |
             org.opencontainers.image.title=your-pm live
-            org.opencontainers.image.description=切身产品经理 · 实时语音链路（豆包 ASR + WMA 主题提取）
+            org.opencontainers.image.description=贴身产品经理 · 实时语音链路（豆包 ASR + WMA 主题提取）
 
       - name: 构建并推送
         id: build

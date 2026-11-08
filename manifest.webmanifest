@@ -1,6 +1,6 @@
 {
-  "name": "切身产品经理 · 实时提示",
-  "short_name": "切身提示",
+  "name": "贴身产品经理 · 实时提示",
+  "short_name": "贴身提示",
   "description": "实时语音转写、主题识别与销售提示卡",
   "start_url": "/m",
   "scope": "/",

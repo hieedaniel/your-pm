@@ -1,4 +1,4 @@
-"""切身产品经理 · 实时音频链路后台（Python 3.13 纯标准库 / 零第三方依赖）
+"""贴身产品经理 · 实时音频链路后台（Python 3.13 纯标准库 / 零第三方依赖）
 
 启动：
     cd qieshen-live && python server.py
@@ -1264,7 +1264,7 @@ async def main():
     srv = await asyncio.start_server(handle_conn, s["host"], s["port"])
     sh = ASR_CHECK["shape"] if ASR_CHECK else {}
     print("=" * 76)
-    print(" 切身产品经理 · 实时音频链路 (v1.2 · 豆包接入形态矩阵)")
+    print(" 贴身产品经理 · 实时音频链路 (v1.2 · 豆包接入形态矩阵)")
     print(" 地址        : http://%s:%d" % (s["host"], s["port"]))
     print(" ASR         : %s | 模型 %s·%s版 | %s | 语种 %s | 热词 %d" %
           (CFG["asr"].get("provider"), sh.get("version", "?"), sh.get("billing", "?"),
