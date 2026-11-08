@@ -16,6 +16,8 @@ _agent_manifest_backup.json
 _test_*.py
 _test_*.js
 _render_test.js
+_mcp_probe.py
+_repro_*.py
 _wma_*.py
 _mock_acp.py
 _add_answer.py
