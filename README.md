@@ -66,6 +66,12 @@ python server.py          # 读 config.json，默认 127.0.0.1:8780
 上传的文档与配置都在 `data/`（compose 已挂载），`docs-kaiyi/` 内置 19 篇只读。
 PDF 解析需要 `pypdf`（`requirements.txt` 唯一依赖），其余全部标准库。
 
+## 手机端 APK
+
+`android/` 是一个几百 KB 的 WebView 壳：只自己实现麦克风采集（`AudioRecord`，16kHz PCM），
+界面、字幕、卡片全部复用网页，改一处两端生效。push 改动即由 Actions 构建，
+在 Actions 页面的 Artifacts 里下载 `app-debug.apk`。详见 [`android/README.md`](android/README.md)。
+
 ## 目录
 
 ```

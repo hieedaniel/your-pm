@@ -270,6 +270,31 @@ let demoRunning = false, filePlaying = false;
 const STREAM_LANGS = new Set(['zh-CN','en-US','yue-CN','auto']);
 const PAGE_URL = location.origin + '/';
 
+// ---------------------------------------------------------------------------
+// APK 壳（WebView + 原生 AudioRecord）注入的桥。
+// 存在时录音改由系统 AudioRecord 采集，页面依旧负责 WS 上行与 SSE 渲染 ——
+// 音频路径与浏览器版完全一致，所以字幕、卡片、录音循环这些逻辑一份代码两端通用。
+// ---------------------------------------------------------------------------
+const APK = (() => {
+  try { return (window.QSNative && window.QSNative.available()) ? window.QSNative : null; }
+  catch (_) { return null; }
+})();
+
+// 原生推来的是 base64 PCM（16kHz / 单声道 / 200ms 一帧），解成 ArrayBuffer 直接走同一条 WS
+window.__qsPcm = function (b64) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;   // 掉线就丢帧，别在内存里堆
+  const bin = atob(b64);
+  const buf = new ArrayBuffer(bin.length);
+  const v = new Uint8Array(buf);
+  for (let i = 0; i < bin.length; i++) v[i] = bin.charCodeAt(i);
+  ws.send(buf);
+};
+// 原生侧算好的 RMS，复用同一根电平条
+window.__qsLevel = function (rms) {
+  const bar = $('levelbar');
+  if (bar) bar.style.width = Math.min(100, Number(rms || 0) * 260) + '%';
+};
+
 function log(msg, cls='') {
   const box = $('log');
   const d = document.createElement('div');
@@ -405,6 +430,18 @@ async function startRec() {
   starting = true;
   $('btn-rec').disabled = true;
   try {
+    // APK 内：跳过 getUserMedia / AudioWorklet，直接让原生层开采集。
+    // 仍然先连 WS 再开麦，理由同下面那条注释。
+    if (APK) {
+      await connectWs();
+      APK.start();
+      recording = true;
+      $('btn-rec').textContent = '停止录音';
+      log('原生录音已开启 · 16kHz PCM（APK 采集）');
+      setDiag('ok', '原生录音已开启 · 16kHz',
+        ['音频由 APK 原生 AudioRecord 采集，仍走同一条 WS 上行。']);
+      return;
+    }
     if (!window.isSecureContext || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia))
       throw Object.assign(new Error('getUserMedia unavailable'), {name:'SecurityError'});
     stream = await openMic();
@@ -453,6 +490,7 @@ async function startRec() {
 }
 function stopRec() {
   recording = false;
+  if (APK) { try { APK.stop(); } catch (_) {} }   // 原生采集先停，再关 WS
   if (worklet) { try { worklet.disconnect(); } catch (_) {} worklet = null; }
   if (silent) { try { silent.disconnect(); } catch (_) {} silent = null; }
   if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
