@@ -31,6 +31,18 @@ class MultiSourceSearch:
     def primary(self):
         return self.sources[0]["proxy"] if self.sources else None
 
+    def client_for(self, hit: dict):
+        """这份命中来自哪个源——取正文、取详情都得回到原来那个客户端。
+
+        没有它就只能猜主源，多源场景下会拿 A 家的 doc_id 去问 B 家。
+        """
+        tag = (hit or {}).get("origin")
+        if tag:
+            for s in self.sources:
+                if (s.get("name") or "?") == tag:
+                    return s["proxy"]
+        return self.primary
+
     async def call(self, name: str, args: dict) -> dict:
         args = args or {}
         if "list" in name:

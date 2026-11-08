@@ -16,6 +16,8 @@ import re
 import time
 from collections import Counter, deque
 
+import answerer
+import doc_fetch
 from doubao_asr import BaseASR  # noqa: F401  (类型说明用)
 
 
@@ -50,6 +52,10 @@ class Orchestrator:
         self.progressive_min = float(self.policy.get("progressive_min_score", 0.5))
         self.last_topic = None
         self.log = []
+        # 取正文 + 合成答案的后台任务。任务要留引用，否则可能被 GC 掉；
+        # 它不阻塞首卡——销售先看到标题，1～3 秒后同一张卡补上答案。
+        self._bg = set()
+        self.answer_stats = Counter()      # llm / extract / none / failed
 
     # ---------------- ASR 回调 ----------------
     async def on_partial(self, text, lang, meta=None):
@@ -72,7 +78,8 @@ class Orchestrator:
 
         # 两阶段：预取一到就走快通道推粗卡，主题回来后原地升级。
         # st 跨阶段共享：prefetch 结果、已推卡片、本轮已用文档、首卡时间。
-        st = {"prefetch": {}, "pushed": {}, "docs": set(), "first_at": None}
+        st = {"prefetch": {}, "pushed": {}, "docs": set(), "first_at": None,
+              "question": text}
         lock = asyncio.Lock()
         prefetch_ready = asyncio.Event()
 
@@ -204,6 +211,7 @@ class Orchestrator:
         budget = float(self.policy.get("min_confidence", 0.55))
         intent = (topic or {}).get("intent", "general")
         keep = set()
+        enrich_jobs = []
 
         for hit in hits:
             if len(keep) >= max_per_turn:
@@ -230,6 +238,13 @@ class Orchestrator:
 
             card = self._make_card(turn_id, len(pushed) + 1, hit, vis, topic,
                                    t0, provisional)
+            if self._need_enrich(hit):
+                # 远程命中往往只有「文档名片」（文件名 + 相似度），没有正文，
+                # 卡片上会是空的。先把标题推出去占位，正文到手后同一张卡补答案：
+                # 新增卡会打断阅读，原地覆盖不会。
+                card["pending"] = True
+                card["note"] = "正在读原文…"
+                enrich_jobs.append((key, dict(hit)))
             await self.emit("hint", card)
             self.card_count += 1
             pushed[key] = card
@@ -245,9 +260,108 @@ class Orchestrator:
                         turn_id, t0, card, demote=True,
                         note="已被更贴主题的依据取代，仅作参考")
 
+        for key, hit in enrich_jobs:
+            self._spawn(self._enrich(turn_id, t0, key, hit, topic, st))
+
+    # ---------------- 取正文 → 合成答案 ----------------
+    def _spawn(self, coro):
+        task = asyncio.create_task(coro)
+        self._bg.add(task)
+        task.add_done_callback(self._bg.discard)
+        return task
+
+    def _client_for(self, hit: dict):
+        fn = getattr(self.mcp, "client_for", None)
+        if callable(fn):
+            return fn(hit)
+        return self.mcp
+
+    def _need_enrich(self, hit: dict) -> bool:
+        """这张卡需不需要去取正文。
+
+        本地文档库把「一句话结论」写在 front-matter 里，检索时直接带出来了，
+        不用再读全文；远程知识库（资料中心这类）只返回文档名片，必须补。
+        """
+        if (hit.get("answer") or "").strip():
+            return False
+        if not (hit.get("doc_id") or hit.get("source") or hit.get("title")):
+            return False
+        client = self._client_for(hit)
+        return client is not None and getattr(client, "transport", "") != "local"
+
+    async def _enrich(self, turn_id, t0, key, hit, topic, st):
+        """后台把「文档名片」变成「能照着说的一句话」，原地升级卡片。
+
+        读全文 + 生成答案合计 1～3 秒，放在首卡之后做：销售先看到是哪份资料，
+        再看到该怎么说。任何一步失败都要写进卡片的 note —— 空着和失败长得一样，
+        现场分不清是该换个问法还是配置坏了。
+        """
+        card = (st.get("pushed") or {}).get(key)
+        if card is None:
+            return
+        question = st.get("question") or ""
+        query = (topic or {}).get("query") or question
+        client = self._client_for(hit)
+        try:
+            doc = await asyncio.wait_for(
+                doc_fetch.fetch_document(client, hit, timeout=8.0), 12.0)
+        except Exception as e:
+            doc = {"text": "", "error": "%s: %s" % (type(e).__name__, str(e)[:80])}
+
+        if not doc.get("text"):
+            self.answer_stats["failed"] += 1
+            reason = doc.get("error") or "没取到正文"
+            await self._replace(
+                turn_id, t0, card, demote=False,
+                note="只拿到文档名，没取到正文：%s" % reason,
+                extra={"pending": False, "answer_mode": "none"})
+            return
+
+        passages = doc_fetch.split_passages(doc["text"], query, 3)
+        try:
+            res = await answerer.compose(question, query, hit.get("title"),
+                                         passages, self.cfg)
+        except Exception as e:
+            res = {"answer": "", "mode": "none",
+                   "error": "%s: %s" % (type(e).__name__, str(e)[:80]), "ms": 0}
+
+        self.answer_stats[res.get("mode", "none")] += 1
+        ans = (res.get("answer") or "").strip()
+        extra = {
+            "pending": False,
+            "answer_mode": res.get("mode", ""),
+            "answer_ms": res.get("ms", 0),
+            "doc_via": doc.get("via", ""),
+            "doc_chars": len(doc.get("text") or ""),
+            # 出处：原文摘句要说清是原文，不然销售会当成我们的承诺
+            "source": hit.get("source") or card.get("source", ""),
+        }
+        if not ans:
+            await self._replace(turn_id, t0, card, demote=False,
+                                note="正文里没找到能回答这句的内容",
+                                extra=dict(extra, answer_mode="none"))
+            return
+        if res.get("quoted"):
+            extra["quoted"] = True
+        note = ""
+        if res.get("error"):
+            # 模型不可用/判断未覆盖时退成原文摘句，得让人知道这是原文而非生成的
+            note = ("原文摘句（%s）" % res["error"])[:120] if res.get("quoted") else ""
+        elif doc.get("via", "").startswith("mcp-read"):
+            note = ""
+        await self._replace(
+            turn_id, t0, card, demote=False, note=note,
+            extra=dict(extra, answer=ans,
+                       # 首卡若没 snippet，用最贴题的一段原文补上
+                       snippet=(card.get("snippet") or (passages[0] if passages else ""))[:600]))
+
     async def _replace(self, turn_id, t0, card, hit=None, topic=None,
-                       demote=False, note=""):
-        """原地替换一张已推卡片（升级或降级），前端按 id 覆盖，不新增卡。"""
+                       demote=False, note="", extra=None):
+        """原地替换一张已推卡片（升级或降级），前端按 id 覆盖，不新增卡。
+
+        extra 用于补 answer / pending / 取正文方式这类增量字段：
+        显式传入才覆盖，没传就保持卡片原值（否则补答案时会把 snippet 冲空）。
+        """
         new = dict(card)
         new["kind"] = "hint.update"     # payload 自描述，别让消费方靠猜字段
         new["provisional"] = False
@@ -264,6 +378,10 @@ class Orchestrator:
             new["topics"] = [t["label"] for t in topic.get("topics", [])[:3]]
             new["intent"] = topic.get("intent", card.get("intent", "general"))
             new["degraded"] = bool(topic.get("degraded", False))
+        if extra:
+            for k, v in extra.items():
+                if v not in (None, ""):
+                    new[k] = v
         if note:
             new["note"] = note
         new["refine_ms"] = round((time.perf_counter() - t0) * 1000, 1)
@@ -376,6 +494,8 @@ class Orchestrator:
             "progressive": self.progressive,
             "core": len(self.core_times), "assist": len(self.assist_times),
             "extractor": __import__("wma_agent").extractor_info(self.extractor),
+            "answerer": dict(self.answer_stats),
+            "doc_cache": doc_fetch.fetch_stats(),
             "last_topic": (self.last_topic or {}).get("query", ""),
         }
 
@@ -389,4 +509,5 @@ class Orchestrator:
         self.topic_lat.clear()
         self.card_lat.clear()
         self.card_final_lat.clear()
+        self.answer_stats.clear()
         self.last_topic = None

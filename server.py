@@ -46,6 +46,8 @@ from mcp_perf import PerfSearchProxy
 from wma_agent import (build_extractor, extractor_info, probe_wma,
                        load_taxonomy)
 from orchestrator import Orchestrator
+import answerer
+import doc_fetch
 import kb_admin as KB
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -804,12 +806,39 @@ async def kb_api(p: str, method: str, u, headers, body: bytes):
             hint = "它确实没有检索类工具：这个源只能当业务系统用，不能当知识库"
         else:
             hint = "看 error 原文；URL 后缀、鉴权头、令牌作用域都是常见原因"
+        # 命中之后再做一件事：把「文档名片」变成「这句话该怎么答」。
+        # 试检索不是实时链路，可以等 8～12 秒；结果直接显示在管理页，
+        # 让对接人一眼看出「检索到了」和「能给出答案」是两件不同的事。
+        answer_block = {"answer": "", "mode": "none", "error": "", "doc_via": ""}
+        if hits:
+            top = hits[0]
+            try:
+                doc = await asyncio.wait_for(
+                    doc_fetch.fetch_document(client, top, timeout=8.0), 12.0)
+            except Exception as e:
+                doc = {"text": "", "error": "%s: %s" % (type(e).__name__, str(e)[:80])}
+            if doc.get("text"):
+                passages = doc_fetch.split_passages(doc["text"], query, 3)
+                answer_block = await answerer.compose(
+                    query, query, top.get("title"), passages, CFG)
+                answer_block.update({
+                    "doc_via": doc.get("via", ""),
+                    "doc_chars": len(doc["text"]),
+                    "passages": [p[:160] for p in passages],
+                })
+                if not answer_block.get("answer"):
+                    hint = "正文取到了，但没找到能回答这句的内容：换个问法或看下方原文片段"
+            else:
+                answer_block["error"] = doc.get("error") or "没取到正文"
+                hint = ("检索到了 %s，但取不到正文：%s"
+                        % (top.get("title", "文档"), answer_block["error"][:90]))
         return 200, {
             "ok": bool(hits),
             "tool": res.get("tool") or (client.search_tool_info() or {}).get("name", ""),
             "query": query,
             "hits": [{"title": h["title"], "snippet": h["snippet"][:160],
                       "score": h["score"], "visibility": h["visibility"]} for h in hits[:3]],
+            "answer": answer_block,
             "error": err,
             "hint": hint,
         }

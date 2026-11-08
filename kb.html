@@ -388,6 +388,16 @@ async function searchSrc(i) {
     if (r.ok) {
       log('检索工具 ' + (r.tool || '?') + ' · 命中 ' + r.hits.length + ' 条：', 's');
       r.hits.forEach(h => log('· [' + h.score + '] ' + h.title + ' — ' + h.snippet.slice(0, 60)));
+      const a = r.answer || {};
+      if (a.answer) {
+        log('✔ 可以照着说：' + a.answer, 's');
+        log('  （' + (a.mode === 'llm' ? '模型生成' : '原文摘句') + ' · '
+            + (a.doc_via || '未知取文方式') + ' · 正文 ' + (a.doc_chars || 0) + ' 字'
+            + (a.error ? ' · ' + a.error.slice(0, 60) : '') + '）');
+      } else {
+        log('✘ 还没法生成答案：' + (a.error || r.hint || '正文里没有可回答的内容'), 'e');
+      }
+      if (a.passages && a.passages.length) log('  原文片段：' + a.passages[0].slice(0, 90));
     } else {
       log('没命中：' + (r.error || r.hint || '未知原因'), 'e');
       if (r.tool) log('认到的检索工具：' + r.tool);
