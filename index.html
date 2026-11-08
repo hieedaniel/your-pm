@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>切身产品经理 · 实时音频链路原型</title>
+<style>
+  :root{
+    --bg:#f5f7fa; --card:#ffffff; --ink:#1c2532; --ink2:#4a5666; --ink3:#7b8798;
+    --line:#e2e8f0; --line2:#eef2f7; --blue:#1d4ed8; --blue-l:#eaf1ff;
+    --navy:#12325a; --orange:#d9631e; --orange-l:#fff1e7; --red:#c83838; --red-l:#fdecec;
+    --green:#1f7a5c; --green-l:#e8f6f0; --purple:#6b46b9; --purple-l:#f1ecfb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-size:14px;line-height:1.6;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased}
+  header{background:linear-gradient(135deg,#12325a 0%,#1d4ed8 100%);color:#fff;padding:20px 26px}
+  header .row{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  .brand{font-size:19px;font-weight:700;letter-spacing:-.2px}
+  .brand span{font-size:11.5px;font-weight:600;opacity:.75;margin-left:10px;letter-spacing:.06em}
+  .chips{display:flex;gap:7px;flex-wrap:wrap}
+  .chip{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.22);
+    border-radius:99px;padding:3px 11px;font-size:11.5px;font-weight:600}
+  .chip.on{background:rgba(120,230,180,.24);border-color:rgba(120,230,180,.55)}
+  .chip.warn{background:rgba(255,190,120,.22);border-color:rgba(255,190,120,.5)}
+  .wrap{max-width:1440px;margin:0 auto;padding:18px 22px 60px}
+  .hintbar{background:var(--blue-l);border:1px solid #d3e2ff;border-radius:9px;
+    padding:9px 14px;font-size:12.5px;color:var(--ink2);margin-bottom:16px}
+  code{background:#eef2f7;padding:1px 5px;border-radius:4px;font-size:12px;
+    font-family:"SFMono-Regular",Consolas,monospace}
+  .grid{display:grid;grid-template-columns:300px minmax(340px,1fr) 370px;gap:16px}
+  @media(max-width:1180px){.grid{grid-template-columns:1fr 1fr}}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    box-shadow:0 1px 3px rgba(20,40,80,.04);display:flex;flex-direction:column;overflow:hidden}
+  .ph{padding:13px 16px;border-bottom:1px solid var(--line2);font-weight:700;
+    font-size:14px;color:var(--navy);display:flex;justify-content:space-between;align-items:center}
+  .ph small{font-weight:500;color:var(--ink3);font-size:11.5px}
+  .pb{padding:14px 16px}
+  .pb.scroll{overflow-y:auto}
+  button{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:8px;
+    padding:8px 13px;font-size:13px;font-weight:600;cursor:pointer;transition:.15s}
+  button:hover{border-color:var(--blue);color:var(--blue)}
+  button.primary{background:var(--blue);border-color:var(--blue);color:#fff}
+  button.primary:hover{background:#1740b4;color:#fff}
+  button.ghost{background:var(--purple-l);border-color:#ddd2f5;color:var(--purple)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .btns{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  label{display:block;font-size:12px;color:var(--ink3);font-weight:600;margin:12px 0 5px}
+  select,input[type=text]{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:8px;
+    font-size:13px;background:#fff;color:var(--ink);outline:none}
+  select:focus,input:focus{border-color:var(--blue)}
+  .track{font-size:11.5px;margin-top:6px;padding:7px 9px;border-radius:7px;
+    background:var(--green-l);color:var(--green);border:1px solid #c3e6d6}
+  .track.seg{background:var(--orange-l);color:var(--orange);border-color:#f4d3bb}
+  .level{height:7px;background:var(--line2);border-radius:99px;overflow:hidden;margin-top:10px}
+  .level i{display:block;height:100%;width:0%;background:linear-gradient(90deg,#35b98a,#1d4ed8);transition:width .1s}
+  .stats{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:12px}
+  .stat{background:var(--bg);border-radius:8px;padding:8px 10px}
+  .stat b{display:block;font-size:17px;color:var(--navy);font-variant-numeric:tabular-nums}
+  .stat span{font-size:11px;color:var(--ink3)}
+  .log{font-size:11.5px;color:var(--ink2);max-height:170px;overflow-y:auto;
+    background:#fbfcfe;border:1px solid var(--line2);border-radius:8px;padding:9px 11px;margin-top:12px}
+  .log div{margin-bottom:3px;font-family:"SFMono-Regular",Consolas,monospace;font-size:11px}
+  .log .w{color:var(--orange)} .log .e{color:var(--red)}
+  .diag{font-size:11.5px;border-radius:8px;padding:9px 11px;margin-top:12px;line-height:1.75}
+  .diag.ok{background:var(--green-l);color:var(--green);border:1px solid #c3e6d6}
+  .diag.bad{background:var(--red-l);color:#a52a2a;border:1px solid #f3cccc}
+  .diag.warn{background:var(--orange-l);color:#a04a15;border:1px solid #f4d3bb}
+  .diag b{font-weight:700}
+  .diag ol{margin:5px 0 0;padding-left:17px}
+  .diag li{margin-bottom:2px}
+  .diag .url{display:inline-block;background:rgba(255,255,255,.72);border-radius:4px;
+    padding:0 5px;font-family:Consolas,monospace;font-weight:700}
+  .filerow{display:flex;gap:7px;align-items:center;flex-wrap:wrap}
+  .filerow button{flex:1;font-size:12px;padding:7px 9px}
+  input[type=file]{font-size:11px;width:100%;color:var(--ink2)}
+  .audioStat{font-size:11.5px;color:var(--ink2);background:var(--bg);border-radius:8px;
+    padding:8px 10px;margin-top:8px;font-variant-numeric:tabular-nums}
+  .audioStat b{color:var(--navy)}
+
+  #transcript{height:520px;overflow-y:auto;padding:16px}
+  .line{padding:10px 12px;border-radius:9px;margin-bottom:9px;border-left:3px solid var(--blue);
+    background:var(--blue-l);animation:fade .25s ease}
+  .line.self{background:#f4f6fa;border-left-color:#9aa9bd}
+  .line .who{font-size:11px;color:var(--ink3);font-weight:700;margin-bottom:3px}
+  .line .txt{font-size:14px;color:var(--ink)}
+  .partial{border:1px dashed #b9cdf5;background:#f7faff;border-radius:9px;padding:10px 12px;
+    color:var(--ink2);min-height:42px;margin-bottom:12px;font-size:14px}
+  .partial .tag{font-size:10.5px;color:var(--blue);font-weight:700;letter-spacing:.08em;display:block;margin-bottom:3px}
+  .empty{color:var(--ink3);font-size:12.5px;text-align:center;padding:26px 10px}
+  @keyframes fade{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:none}}
+
+  #topicbox{padding:14px 16px;border-bottom:1px solid var(--line2);min-height:96px}
+  .tq{font-size:13px;font-weight:700;color:var(--navy);margin-bottom:8px;word-break:break-all}
+  .tpills{display:flex;gap:6px;flex-wrap:wrap}
+  .tpill{background:var(--purple-l);color:var(--purple);border:1px solid #ddd2f5;
+    border-radius:99px;padding:3px 9px;font-size:11.5px;font-weight:600}
+  .tmeta{font-size:11px;color:var(--ink3);margin-top:8px}
+  .tmeta .deg{color:var(--orange);font-weight:700}
+  #cards{padding:14px 16px;height:390px;overflow-y:auto}
+  .card{background:#fff;border:1px solid var(--line);border-left:4px solid var(--green);
+    border-radius:10px;padding:12px 13px;margin-bottom:11px;animation:fade .3s ease;
+    box-shadow:0 1px 3px rgba(20,40,80,.05);transition:opacity .5s}
+  .card.internal{border-left-color:var(--orange);background:#fffaf5}
+  .card.fading{opacity:0}
+  .card .top{display:flex;align-items:center;gap:7px;margin-bottom:7px}
+  .badge{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:99px;
+    background:var(--green-l);color:var(--green)}
+  .card.internal .badge{background:var(--orange-l);color:var(--orange)}
+  .card .title{font-weight:700;font-size:13.5px;color:var(--navy);flex:1}
+  .card .score{font-size:10.5px;color:var(--ink3)}
+  .card .ans{font-size:13.5px;color:var(--ink);line-height:1.7;font-weight:600;
+    letter-spacing:.2px}
+  .card .snip{font-size:11.5px;color:var(--ink3);line-height:1.6;margin-top:6px;
+    padding-left:8px;border-left:2px solid var(--line);
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .card .note{background:var(--orange-l);border-radius:6px;padding:5px 8px;
+    font-size:11.5px;color:var(--orange);margin-top:8px;font-weight:600}
+  .card .meta{display:flex;justify-content:space-between;gap:8px;font-size:10.5px;
+    color:var(--ink3);margin-top:9px;border-top:1px solid var(--line2);padding-top:7px}
+  .card .tops{font-size:10.5px;color:var(--purple);margin-top:6px}
+  .card.provisional{border-left-style:dashed;border-left-color:#b9c3d6}
+  .card.provisional .badge{background:#eef1f6;color:#6b7791}
+  .card.demoted{opacity:.55;border-left-color:#d5dae3}
+  .card.upd{animation:pulse .9s ease}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(60,120,220,.28)}100%{box-shadow:0 0 0 10px rgba(60,120,220,0)}}
+  .foot{margin-top:22px;font-size:12px;color:var(--ink3);line-height:1.8}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="row">
+    <div class="brand">切身产品经理 <span>实时音频链路原型 · v1.2（豆包形态矩阵自检）</span></div>
+    <div class="chips">
+      <span class="chip" id="c-asr">ASR —</span>
+      <span class="chip" id="c-wma">WMA —</span>
+      <span class="chip" id="c-mcp">MCP —</span>
+      <span class="chip" id="c-docs">文档 —</span>
+      <span class="chip" id="c-sse">SSE 连接中</span>
+      <span class="chip" id="c-ws">音频未连接</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="hintbar">
+    前端 <code>getUserMedia → AudioWorklet → 16kHz PCM / 200ms 分包</code> 上行到后台；后台代理注入豆包鉴权头，
+    <code>definite</code> 定稿后并行触发 <strong>WMA 主题提取</strong> 与 <strong>MCP 文档检索</strong>，
+    字幕 / 主题 / 提示卡分三路 SSE 回推。<strong>前端不持有任何密钥。</strong><br>
+    麦克风被拒时：用「回放音频 → WS」上传本地录音（同样走 16kHz / 200ms PCM 上行），
+    或用「手动注入话轮 / 播放演示会谈」验证下游链路；权限修复步骤见左下方诊断框。
+  </div>
+
+  <div class="grid">
+    <!-- 左：控制 -->
+    <div class="panel">
+      <div class="ph">会话控制 <small>无麦克风也能演示</small></div>
+      <div class="pb">
+        <div class="btns">
+          <button class="primary" id="btn-rec">开始录音</button>
+          <button class="ghost" id="btn-demo">播放演示会谈</button>
+          <button id="btn-reset">重置</button>
+        </div>
+
+        <label>识别语种（决定 ASR 轨道）</label>
+        <select id="lang">
+          <option value="zh-CN">中文普通话 zh-CN</option>
+          <option value="en-US">英语 en-US</option>
+          <option value="yue-CN">粤语 yue-CN</option>
+          <option value="auto">自动（中英方言）</option>
+          <option value="ja-JP">日语 ja-JP</option>
+          <option value="ko-KR">韩语 ko-KR</option>
+          <option value="de-DE">德语 de-DE</option>
+          <option value="fr-FR">法语 fr-FR</option>
+          <option value="es-MX">西班牙语 es-MX</option>
+          <option value="pt-BR">葡萄牙语 pt-BR</option>
+          <option value="ru-RU">俄语 ru-RU</option>
+          <option value="ar-SA">阿拉伯语 ar-SA</option>
+          <option value="th-TH">泰语 th-TH</option>
+          <option value="vi-VN">越南语 vi-VN</option>
+          <option value="id-ID">印尼语 id-ID</option>
+          <option value="it-IT">意大利语 it-IT</option>
+        </select>
+        <div class="track" id="track">实时流式轨 · 逐字上屏，定稿约 1.2s</div>
+        <div class="audioStat" id="asrshape" style="margin-top:8px">ASR 形态读取中…</div>
+        <div class="filerow" style="margin-top:6px">
+          <button class="ghost" id="btn-probe" style="font-size:12px;padding:7px 9px">检测豆包密钥</button>
+          <button class="ghost" id="btn-wma" style="font-size:12px;padding:7px 9px">检测 WMA 凭据</button>
+        </div>
+        <div class="diag warn" id="probeout" style="display:none"></div>
+        <div class="diag warn" id="wmaout" style="display:none"></div>
+
+        <label>手动注入话轮（联调 / 无麦克风）</label>
+        <input type="text" id="turn" placeholder="例如：灵犀Pro能内置5G模组吗？回车发送">
+        <div class="level"><i id="levelbar"></i></div>
+
+        <label>音频文件回放（无麦克风也能验证音频上行链路）</label>
+        <input type="file" id="audiofile" accept="audio/*,.wav,.mp3,.m4a,.ogg,.webm">
+        <div class="filerow" style="margin-top:7px">
+          <button class="ghost" id="btn-sample">一键示例音频（推荐）</button>
+        </div>
+        <div class="filerow" style="margin-top:6px">
+          <button id="btn-file">回放所选文件</button>
+          <button id="btn-file-stop" disabled>停止</button>
+        </div>
+        <input type="text" id="filetext" style="margin-top:7px"
+               placeholder="可选：这段录音的文字（mock 模式模拟定稿，非 ASR 识别结果）">
+        <div class="audioStat" id="audiostat">音频帧 <b>0</b> · <b>0 B</b> · <b>0.0 s</b> · 等待上行</div>
+
+        <div class="stats">
+          <div class="stat"><b id="s-turns">0</b><span>定稿话轮</span></div>
+          <div class="stat"><b id="s-topics">0</b><span>主题提取</span></div>
+          <div class="stat"><b id="s-cards">0</b><span>提示卡</span></div>
+          <div class="stat"><b id="s-silenced">0</b><span>抑制次数</span></div>
+          <div class="stat"><b id="s-topicp95">—</b><span>主题 P95 / ms</span></div>
+          <div class="stat"><b id="s-cardp95">—</b><span>卡片 P95 / ms</span></div>
+        </div>
+        <div class="diag warn" id="micdiag">正在检测麦克风权限…</div>
+        <div class="filerow" style="margin-top:8px">
+          <button id="btn-copy" style="font-size:12px;padding:7px 9px">复制本机地址</button>
+          <button id="btn-reprobe" style="font-size:12px;padding:7px 9px">重新检测权限</button>
+        </div>
+        <div class="log" id="log"><div>等待事件…</div></div>
+      </div>
+    </div>
+
+    <!-- 中：字幕 -->
+    <div class="panel">
+      <div class="ph">实时转写 <small>partial 覆盖 · definite 定稿</small></div>
+      <div id="transcript" class="pb scroll">
+        <div class="partial"><span class="tag">识别中 · PARTIAL</span><span id="partial-text">尚未开始</span></div>
+        <div id="lines"><div class="empty">点「播放演示会谈」看完整链路，或开始录音</div></div>
+      </div>
+    </div>
+
+    <!-- 右：主题与卡片 -->
+    <div class="panel">
+      <div class="ph">主题与内容提示 <small>异步旁路 · 不阻塞字幕</small></div>
+      <div id="topicbox">
+        <div class="empty" id="topic-empty">等待 WMA 提取主题…</div>
+        <div id="topic-content" style="display:none">
+          <div class="tq" id="topic-query"></div>
+          <div class="tpills" id="topic-pills"></div>
+          <div class="tmeta" id="topic-meta"></div>
+        </div>
+      </div>
+      <div id="cards"><div class="empty" id="cards-empty">提示卡将在这里淡入，TTL 后自动淡出</div></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <strong>刻意不做：</strong>向量库、LLM 生成话术卡片、企业微信推送、说话人分离、声纹建模、原始音频落盘。<br>
+    <strong>切换真实服务：</strong>改 <code>config.json</code> 的 <code>asr.provider</code> / <code>wma.provider</code> / <code>mcp.transport</code> 并填入凭据，业务代码零改动；
+    文档放进 <code>docs/</code> 即被索引。<code>internal</code> 卡标注「勿对客户表述」，<code>restricted</code> 整卡不推。<br>
+    <strong>诚实的取舍：</strong>豆包 <code>language</code> 仅流式输入接口支持，非中英语种走分段轨，约 4s 延迟，不是逐字实时。
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let ws = null, audioCtx = null, worklet = null, stream = null, silent = null,
+    recording = false, starting = false, reconnecting = false;
+let demoRunning = false, filePlaying = false;
+const STREAM_LANGS = new Set(['zh-CN','en-US','yue-CN','auto']);
+const PAGE_URL = location.origin + '/';
+
+function log(msg, cls='') {
+  const box = $('log');
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = new Date().toLocaleTimeString('zh-CN', {hour12:false}) + ' ' + msg;
+  box.prepend(d);
+  while (box.children.length > 40) box.lastChild.remove();
+}
+function chip(id, text, cls='') { const e = $(id); e.textContent = text; e.className = 'chip ' + cls; }
+
+async function loadState() {
+  try {
+    const s = await (await fetch('/api/state')).json();
+    const a = s.asr || {}, sh = a.shape || {}, v = a.validation || {};
+    const label = 'ASR ' + (a.provider || '—') + ' · ' + (sh.version || '?') + '/' + (sh.billing || '?');
+    chip('c-asr', label, a.provider === 'mock' ? 'warn' : 'on');
+    $('c-asr').title = [
+      'Resource ID : ' + (sh.resource_id || '—'),
+      'stream      : ' + (sh.endpoint_stream || '—'),
+      'segment     : ' + (sh.endpoint_segment || '—'),
+      'auth        : ' + (sh.auth_mode || '—'),
+      'StreamMode  : ' + (sh.stream_mode ?? 0) + '（0=不发送）',
+      '项目        : ' + (sh.project || '<未填>') + '（须与 API Key 同项目）',
+      '自检        : ' + (v.ok ? '通过' : ((v.errors || []).join(' / ') || '未通过'))
+    ].join('\n');
+    $('asrshape').innerHTML =
+      '<b>' + esc(sh.version || '?') + ' · ' + esc(sh.billing || '?') + '</b> · ' +
+      esc(sh.resource_id || '—') + '<br>StreamMode ' + (sh.stream_mode ?? 0) +
+      ' · ' + esc(sh.auth_mode || '—') + ' · 项目 ' + esc(sh.project || '未填');
+    chip('c-wma', 'WMA ' + (s.wma.provider || '—'), s.wma.provider === 'rule' ? 'warn' : 'on');
+    chip('c-mcp', 'MCP ' + (s.mcp.transport || '—'), 'on');
+    chip('c-docs', '文档 ' + s.docs.length + ' 篇 / ' + s.chunks + ' 块');
+    log('配置已加载：' + label + ' · 热词 ' + a.hotwords + ' 条');
+    (v.errors || []).forEach(e => log('自检错误：' + e, 'e'));
+    (v.warnings || []).slice(0, 3).forEach(w => log('自检提示：' + w, 'w'));
+    // 已配真实 provider 时自动跑一次握手探测：一打开页面就知道密钥能不能用
+    if (s.asr.provider === 'doubao' && s.asr.auth_configured) probeKey(true);
+  } catch (e) { log('读取状态失败 ' + e.message, 'e'); }
+}
+
+function updateTrack() {
+  const lang = $('lang').value;
+  const seg = !STREAM_LANGS.has(lang);
+  const t = $('track');
+  t.className = 'track' + (seg ? ' seg' : '');
+  t.textContent = seg
+    ? '分段流式轨 · bigmodel_nostream 指定 ' + lang + '，约 4s 出稿（非逐字实时）'
+    : '实时流式轨 · bigmodel_async，逐字上屏，定稿约 1.2s';
+}
+
+$('lang').addEventListener('change', () => {
+  updateTrack();
+  if (ws && ws.readyState === WebSocket.OPEN)
+    ws.send(JSON.stringify({type:'control', action:'set_lang', lang:$('lang').value}));
+});
+
+// ---------------- 麦克风权限诊断 ----------------
+function setDiag(cls, title, steps) {
+  const el = $('micdiag');
+  el.className = 'diag ' + cls;
+  el.innerHTML = '<b>' + title + '</b>' + (steps && steps.length
+    ? '<ol>' + steps.map(s => '<li>' + s + '</li>').join('') + '</ol>' : '');
+}
+const SYS_BROWSER_STEPS = [
+  '用系统 <b>Chrome / Edge</b> 打开 <span class="url">' + esc(PAGE_URL) +
+    '</span>（内嵌预览面板通常不转发麦克风授权请求，Permission denied 多发生在这里）。',
+  '点地址栏左侧图标 → 站点设置 → <b>麦克风改为「允许」</b> → 刷新。若此前点过「拒绝」，浏览器会一直记住。',
+  '仍失败：检查 <code>chrome://settings/content/microphone</code> 是否全局阻止；Windows「设置 → 隐私和安全性 → 麦克风」允许桌面应用访问。',
+  '临时兜底：本页「播放演示会谈」或「回放音频 → WS」都能验证音频上行与下游全链路。'
+];
+async function probeMic() {
+  const secure = !!window.isSecureContext;
+  const hasAPI = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  if (!secure || !hasAPI) {
+    setDiag('bad', '当前环境不具备麦克风采集条件', [
+      'isSecureContext=<b>' + secure + '</b>，mediaDevices=<b>' + hasAPI +
+        '</b>；getUserMedia 仅在 HTTPS 或 localhost / 127.0.0.1 下可用。',
+      '请在系统浏览器打开 <span class="url">' + esc(PAGE_URL) + '</span>，不要用局域网 IP 或 file:// 打开。',
+      '可直接用「播放演示会谈」或「回放音频 → WS」继续验证链路。'
+    ]);
+    return;
+  }
+  let perm = 'unknown';
+  try { perm = (await navigator.permissions.query({name:'microphone'})).state; }
+  catch (e) { /* 部分内核不支持 microphone 权限名 */ }
+  if (perm === 'granted') {
+    setDiag('ok', '麦克风权限已授予（' + esc(location.host) + '）',
+      ['点「开始录音」即可采集；AudioWorklet 重采样为 16kHz / 200ms PCM 分包上行。']);
+  } else if (perm === 'denied') {
+    setDiag('bad', '站点麦克风权限已被拒绝', SYS_BROWSER_STEPS);
+  } else {
+    setDiag('warn', '权限状态 ' + perm + '（点录音时应弹出授权框）', SYS_BROWSER_STEPS);
+  }
+}
+function explainMicError(e) {
+  const name = (e && e.name) || '';
+  const msg = (e && e.message) || String(e);
+  if (/worklet|AudioContext|addModule/i.test(msg))
+    return ['音频上下文创建失败（权限已给到，但音频管线不可用）', [
+      '多为内嵌预览容器的 AudioWorklet 限制，请在系统 Chrome / Edge 打开 <span class="url">' + esc(PAGE_URL) + '</span>。',
+      '或改用「回放音频 → WS」：不依赖 AudioWorklet，仍走同一条音频上行链路。']];
+  if (name === 'NotFoundError' || name === 'DevicesNotFoundError')
+    return ['未发现可用的音频输入设备', [
+      'Windows「设置 → 系统 → 声音 → 输入」确认有已启用的麦克风，插好耳机麦或外置麦。',
+      '设备存在但被禁用时，在「声音控制面板 → 录制」里启用后刷新本页。']];
+  if (name === 'NotReadableError' || name === 'TrackStartError')
+    return ['麦克风被占用或驱动读取失败', [
+      '关闭腾讯会议 / 微信 / Zoom / OBS 等可能独占麦克风的程序后重试。',
+      '或重插 USB 麦克风；仍失败则用「回放音频 → WS」绕开设备层。']];
+  if (name === 'OverconstrainedError')
+    return ['设备不支持所请求的音频约束', [
+      '已自动用最宽松的 <code>audio:true</code> 重试过一次；请检查系统默认输入设备格式。']];
+  if (!window.isSecureContext || name === 'SecurityError')
+    return ['非安全上下文，浏览器禁止采集', SYS_BROWSER_STEPS];
+  return ['麦克风权限被拒绝（' + esc(name || msg) + '）', SYS_BROWSER_STEPS];
+}
+
+// ---------------- 音频采集 ----------------
+async function openMic() {
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      audio: {channelCount:1, echoCancellation:true, noiseSuppression:true}, video:false });
+  } catch (e) {
+    if (e && (e.name === 'OverconstrainedError' || e.name === 'NotFoundError')) {
+      log('严格约束失败，自动用 audio:true 重试…', 'w');
+      return await navigator.mediaDevices.getUserMedia({audio:true, video:false});
+    }
+    throw e;
+  }
+}
+async function startRec() {
+  if (recording || starting) return;
+  starting = true;
+  $('btn-rec').disabled = true;
+  try {
+    if (!window.isSecureContext || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia))
+      throw Object.assign(new Error('getUserMedia unavailable'), {name:'SecurityError'});
+    stream = await openMic();
+    // 先连好上行，再开音频管线：反过来的话最初几百毫秒的帧会丢在 CONNECTING 里
+    await connectWs();
+    const AC = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AC();
+    await audioCtx.audioWorklet.addModule('/audio_worklet.js');
+    const src = audioCtx.createMediaStreamSource(stream);
+    worklet = new AudioWorkletNode(audioCtx, 'pcm16k', {numberOfInputs:1, numberOfOutputs:1});
+    silent = audioCtx.createGain(); silent.gain.value = 0;
+    src.connect(worklet); worklet.connect(silent); silent.connect(audioCtx.destination);
+    worklet.port.onmessage = e => {
+      if (e.data.type === 'pcm') {
+        if (ws && ws.readyState === WebSocket.OPEN) { ws.send(e.data.buffer); return; }
+        // 录音中途连接掉了：以前这里只是静默 return，界面照旧显示「正在录音」，
+        // 实际一个字节都没上行 —— 又是一次「没有任何报错但没字幕」。现在补一次重连。
+        if (recording && !reconnecting) {
+          reconnecting = true;
+          log('音频上行断开，正在重连…', 'w');
+          connectWs().then(() => log('音频上行已重连'))
+                      .catch(err => log('音频上行重连失败：' + ((err && err.message) || err), 'w'))
+                      .finally(() => { reconnecting = false; });
+        }
+      } else if (e.data.type === 'level') {
+        $('levelbar').style.width = Math.min(100, e.data.rms * 260) + '%';
+      }
+    };
+    recording = true;
+    $('btn-rec').textContent = '停止录音';
+    log('麦克风已开启 · ' + Math.round(audioCtx.sampleRate) + 'Hz → 16kHz');
+    setDiag('ok', '麦克风已开启 · ' + Math.round(audioCtx.sampleRate) + 'Hz → 16kHz',
+      ['PCM 帧正在上行；后台 <code>audio.stats</code> 事件会回报帧数、字节与时长。']);
+  } catch (e) {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    if (audioCtx) { try { audioCtx.close(); } catch (_) {} audioCtx = null; }
+    closeWs();
+    const ex = explainMicError(e);
+    setDiag('bad', ex[0], ex[1]);
+    log('无法开启麦克风：' + ((e && e.message) || e) + '（' + ((e && e.name) || 'Error') + '）', 'w');
+    log('可直接用「播放演示会谈」或「回放音频 → WS」继续验证链路');
+  } finally {
+    starting = false;
+    $('btn-rec').disabled = false;
+  }
+}
+function stopRec() {
+  recording = false;
+  if (worklet) { try { worklet.disconnect(); } catch (_) {} worklet = null; }
+  if (silent) { try { silent.disconnect(); } catch (_) {} silent = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (audioCtx) { try { audioCtx.close(); } catch (_) {} audioCtx = null; }
+  $('levelbar').style.width = '0%';
+  $('btn-rec').textContent = '开始录音';
+  // 一条 WS = 一次录音会话。停止时既要告诉后台收尾，也必须真的把连接关掉：
+  // 否则下次「开始录音」会复用这条连接，而服务端那条会话已经 stop 过，
+  // 新推上去的音频帧没人处理 —— 现场表现就是「第二次录音一个字都不出」。
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try { ws.send(JSON.stringify({type:'control', action:'stop'})); } catch (_) {}
+  }
+  closeWs();
+  log('录音已停止');
+}
+function closeWs() {
+  if (!ws) return;
+  const old = ws;
+  ws = null;
+  try { old.onopen = old.onclose = old.onerror = old.onmessage = null; } catch (_) {}
+  try { old.close(); } catch (_) {}
+  chip('c-ws', '音频未连接');
+}
+$('btn-rec').addEventListener('click', () => recording ? stopRec() : startRec());
+
+function connectWs() {
+  // 旧的（含已断开但对象还在的）一律先关掉，每次录音都拿新 session id 开新会话
+  closeWs();
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const sid = 's' + Date.now() + Math.random().toString(36).slice(2, 6);
+  const sock = new WebSocket(proto + '://' + location.host + '/audio?session=' + sid +
+                             '&lang=' + encodeURIComponent($('lang').value));
+  ws = sock;
+  sock.binaryType = 'arraybuffer';
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(Object.assign(new Error('WS 连接超时'), {name:'WsTimeout'}));
+    }, 6000);
+    sock.onopen = () => {
+      if (settled) return;
+      settled = true; clearTimeout(timer);
+      chip('c-ws', '音频已连接', 'on'); log('WS /audio 已连接 · ' + sid);
+      resolve(sock);
+    };
+    sock.onclose = () => {
+      if (ws === sock) ws = null;
+      chip('c-ws', '音频未连接'); log('WS 已断开');
+      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      reject(Object.assign(new Error('WS 被拒绝'), {name:'WsClosed'}));
+    };
+    sock.onerror = () => log('WS 连接异常', 'w');
+    sock.onmessage = e => { if (typeof e.data === 'string') log('WS ← ' + e.data.slice(0,80)); };
+  });
+}
+
+// ---------------- 音频文件回放（不依赖麦克风 / AudioWorklet） ----------------
+function pcmFromAudioBuffer(audio) {
+  const ch = audio.getChannelData(0);          // 多声道取左声道，与 worklet 约定一致
+  const ratio = audio.sampleRate / 16000;
+  const total = Math.floor(ch.length / ratio);
+  const pcm = new Int16Array(total);
+  let peak = 0;
+  for (let i = 0; i < total; i++) {
+    const pos = i * ratio, k = Math.floor(pos), t = pos - k;
+    const a = ch[k], b = (k + 1 < ch.length) ? ch[k + 1] : a;
+    let s = a * (1 - t) + b * t;
+    s = Math.max(-1, Math.min(1, s));
+    if (Math.abs(s) > peak) peak = Math.abs(s);
+    pcm[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+  }
+  return {pcm, peak, seconds: total / 16000};
+}
+async function replayFile(preset) {
+  if (filePlaying) return;
+  const files = $('audiofile').files;
+  const f = preset || (files && files[0]);
+  if (!f) { log('请先选择音频文件（wav / mp3 / m4a / ogg / webm）', 'w'); return; }
+  filePlaying = true;
+  $('btn-file').disabled = true; $('btn-file').textContent = '回放中…';
+  $('btn-file-stop').disabled = false;
+  try {
+    const raw = await f.arrayBuffer();
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const ctx = new AC();
+    let audio;
+    try { audio = await ctx.decodeAudioData(raw); }
+    finally { try { await ctx.close(); } catch (_) {} }
+    const dec = pcmFromAudioBuffer(audio);
+    log('解码：' + (f.name || '示例音频') + ' · ' + audio.sampleRate + 'Hz / ' + audio.numberOfChannels +
+        'ch / ' + dec.seconds.toFixed(1) + 's → 16kHz ' + dec.pcm.length + ' 样本');
+    if (!dec.pcm.length) throw new Error('解码后无音频数据');
+    if (dec.peak < 0.0005) log('提示：该音频接近静音，后台能量帧会很少', 'w');
+
+    await connectWs();
+    const CH = 3200;                            // 200ms @16kHz = 6400 B
+    let sent = 0;
+    for (let off = 0; off < dec.pcm.length && filePlaying; off += CH) {
+      const frame = new Int16Array(CH);        // 末帧补零，保证与 worklet 分包完全一致
+      frame.set(dec.pcm.subarray(off, Math.min(off + CH, dec.pcm.length)));
+      ws.send(frame.buffer);
+      sent++;
+      let sum = 0;
+      for (let i = 0; i < CH; i++) { const v = frame[i] / 32768; sum += v * v; }
+      $('levelbar').style.width = Math.min(100, Math.sqrt(sum / CH) * 260) + '%';
+      await new Promise(r => setTimeout(r, 200));   // 按真实时间节拍回放
+    }
+    $('levelbar').style.width = '0%';
+    log('回放完成：' + sent + ' 帧 / ' + (sent * CH * 2) + ' B，等待后台 audio.stats 回报');
+    const txt = ($('filetext').value || '').trim();
+    if (txt) {
+      await sendTurn(txt, '客户');
+      log('已注入配套文本（mock 定稿，非 ASR 识别结果）');
+    } else {
+      log('未填配套文本：mock ASR 不做声学识别，本轮不出字幕；接真实豆包后由音频直接出稿');
+    }
+    setDiag('ok', '音频上行链路已验证（无需麦克风）', [
+      '本地音频 → 16kHz PCM → 200ms / 6400B 分包 → <code>WS /audio</code> → 后台 ASR 适配器，与真实麦克风完全同一条路径。',
+      '后台通过 <code>audio.stats</code> 回推帧数 / 字节 / 时长；填入豆包密钥后同一段 PCM 会被真实识别。']);
+  } catch (e) {
+    log('音频回放失败：' + ((e && e.message) || e), 'e');
+  } finally {
+    filePlaying = false;
+    closeWs();                                  // 回放结束即收尾，别把旧会话留给麦克风
+    $('btn-file').disabled = false; $('btn-file').textContent = '回放音频 → WS';
+    $('btn-file-stop').disabled = true;
+  }
+}
+$('btn-file').addEventListener('click', () => replayFile());
+$('btn-sample').addEventListener('click', async () => {
+  if (filePlaying) return;
+  try {
+    const r = await fetch('/sample.wav');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const blob = await r.blob();
+    if (!$('filetext').value.trim())
+      $('filetext').value = '灵犀Pro在车间零下二十度能扛得住吗？';
+    log('已加载内置示例音频（合成音，非真人语音）');
+    await replayFile(new File([blob], 'sample.wav', {type:'audio/wav'}));
+  } catch (e) { log('示例音频加载失败：' + ((e && e.message) || e), 'e'); }
+});
+$('btn-file-stop').addEventListener('click', () => { filePlaying = false; log('已请求停止音频回放', 'w'); });
+$('btn-copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText(PAGE_URL); log('已复制地址：' + PAGE_URL + '（粘贴到系统浏览器）'); }
+  catch (e) { log('复制失败，请手动复制：' + PAGE_URL, 'w'); }
+});
+$('btn-reprobe').addEventListener('click', () => { probeMic(); log('已重新检测麦克风权限'); });
+
+// 真实豆包握手探测：不发音频，只验证 Key + Resource ID 是否可用
+async function probeKey(silent) {
+  const box = $('probeout');
+  box.style.display = 'block';
+  box.className = 'diag warn';
+  box.textContent = '正在向豆包发起真实 WebSocket 握手…';
+  $('btn-probe').disabled = true;
+  try {
+    const r = await (await fetch('/api/probe')).json();
+    if (r.ok) {
+      box.className = 'diag ok';
+      box.innerHTML = '<b>✔ 握手成功</b> · HTTP 101<br>' +
+        'resource_id <code>' + esc(r.resource_id) + '</code><br>' +
+        'X-Tt-Logid <code>' + esc(r.logid || '—') + '</code>';
+      log('豆包密钥检测通过 · ' + r.resource_id);
+    } else {
+      box.className = 'diag bad';
+      box.innerHTML = '<b>✘ 握手失败 HTTP ' + esc(String(r.status || '?')) + '</b>' +
+        (r.code ? ' · code ' + esc(String(r.code)) : '') + '<br>' +
+        esc(r.message || '') + '<br>' +
+        '<span style="white-space:pre-wrap;display:block;margin-top:6px">' +
+        esc(r.hint || '') + '</span>' +
+        (r.logid ? '<br>X-Tt-Logid <code>' + esc(r.logid) + '</code>' : '');
+      log('豆包密钥检测失败 HTTP ' + (r.status || '?') + ' · ' + (r.message || ''), 'w');
+    }
+  } catch (e) {
+    box.className = 'diag bad';
+    box.textContent = '探测请求本身失败：' + ((e && e.message) || e);
+  } finally {
+    $('btn-probe').disabled = false;
+  }
+}
+$('btn-probe').addEventListener('click', () => probeKey(false));
+
+// ---------------- WMA 控制面探测 ----------------
+async function probeWma() {
+  const box = $('wmaout');
+  box.style.display = 'block';
+  box.className = 'diag warn';
+  box.textContent = '正在请求 WMA 控制面 /agents…（只读，不建会话，不产生运行时计费）';
+  $('btn-wma').disabled = true;
+  try {
+    const r = await (await fetch('/api/wma-probe')).json();
+    if (r.ok) {
+      box.className = 'diag ok';
+      box.innerHTML = '<b>✔ 控制面连通</b> · ' + esc(r.message || '') + '<br>' +
+        'enterprise <code>' + esc(r.enterprise_id || '—') + '</code> · ' +
+        'auth <code>' + esc(r.auth || '—') + '</code>' +
+        (r.hint ? '<br><span style="display:block;margin-top:6px">' + esc(r.hint) + '</span>' : '');
+      log('WMA 凭据检测通过 · ' + (r.message || ''));
+    } else {
+      box.className = 'diag bad';
+      box.innerHTML = '<b>✘ 未通过' + (r.status ? ' HTTP ' + esc(String(r.status)) : '') + '</b>' +
+        (r.code ? ' · code ' + esc(r.code) : '') + '<br>' +
+        esc(r.message || '') +
+        (r.hint ? '<br><span style="white-space:pre-wrap;display:block;margin-top:6px">' +
+          esc(r.hint) + '</span>' : '') +
+        (r.raw ? '<br><span style="opacity:.75">' + esc(r.raw) + '</span>' : '');
+      log('WMA 检测未通过 · ' + (r.message || ''), 'w');
+    }
+  } catch (e) {
+    box.className = 'diag bad';
+    box.textContent = '探测请求本身失败：' + ((e && e.message) || e);
+  } finally {
+    $('btn-wma').disabled = false;
+  }
+}
+$('btn-wma').addEventListener('click', probeWma);
+
+// ---------------- 话轮注入 ----------------
+async function sendTurn(text, speaker='客户', lang=null) {
+  text = (text || '').trim();
+  if (!text) return;
+  lang = lang || $('lang').value;
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({type:'mock_say', text, speaker, lang}));
+  } else {
+    await fetch('/turn', {method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({text, speaker, lang})});
+  }
+}
+$('turn').addEventListener('keydown', async e => {
+  if (e.key === 'Enter') { const v = $('turn').value; $('turn').value = ''; await sendTurn(v); }
+});
+
+$('btn-demo').addEventListener('click', async () => {
+  if (demoRunning) return;
+  demoRunning = true; $('btn-demo').disabled = true; $('btn-demo').textContent = '播放中…';
+  try {
+    const d = await (await fetch('/api/demo')).json();
+    for (const t of d.turns) {
+      await sendTurn(t.text, t.speaker, t.lang);
+      await new Promise(r => setTimeout(r, 1000));
+    }
+    log('演示会谈播放完毕');
+  } catch (e) { log('演示失败 ' + e.message, 'e'); }
+  demoRunning = false; $('btn-demo').disabled = false; $('btn-demo').textContent = '播放演示会谈';
+});
+
+$('btn-reset').addEventListener('click', async () => {
+  await fetch('/reset', {method:'POST'});
+  $('lines').innerHTML = '<div class="empty">已重置，等待新的话轮</div>';
+  $('cards').innerHTML = '<div class="empty" id="cards-empty">提示卡将在这里淡入</div>';
+  $('topic-content').style.display = 'none'; $('topic-empty').style.display = 'block';
+  $('partial-text').textContent = '尚未开始';
+  log('已重置');
+});
+
+// ---------------- SSE ----------------
+function onPartial(d) { $('partial-text').textContent = d.text || '…'; }
+function onFinal(d) {
+  $('partial-text').textContent = '…';
+  const empty = $('lines').querySelector('.empty'); if (empty) empty.remove();
+  const div = document.createElement('div');
+  div.className = 'line' + (d.speaker === '销售' ? ' self' : '');
+  div.innerHTML = '<div class="who">' + esc(d.speaker || '客户') + ' · ' + esc(d.lang || '') +
+    ' · ' + esc(d.source || '') + '</div><div class="txt">' + esc(d.text) + '</div>';
+  $('lines').appendChild(div);
+  $('transcript').scrollTop = $('transcript').scrollHeight;
+}
+function onTopic(d) {
+  $('topic-empty').style.display = 'none';
+  $('topic-content').style.display = 'block';
+  $('topic-query').textContent = d.should_push ? ('检索主题：' + d.query) : '（本轮抑制推送）';
+  $('topic-pills').innerHTML = (d.topics || []).map(t =>
+    '<span class="tpill">' + esc(t.label) + ' · ' + esc(t.kind) + ' ' + t.confidence + '</span>').join('');
+  $('topic-meta').innerHTML = 'provider <b>' + esc(d.provider) + '</b> · ' + d.latency_ms + 'ms · intent ' +
+    esc(d.intent) + (d.degraded ? ' <span class="deg">· 降级：' + esc(d.degrade_reason || '') + '</span>' : '');
+}
+function cardInner(c) {
+  const tops = (c.topics || []).length
+    ? '<div class="tops">' + esc(c.topics.slice(0, 2).join(' · ')) + '</div>' : '';
+  const badge = c.provisional ? '粗筛中' : c.badge;
+  const ms = c.latency_ms != null ? ' · ' + Math.round(c.latency_ms) + 'ms' : '';
+  const rms = (c.update && !c.demote && c.refine_ms != null)
+    ? ' → ' + Math.round(c.refine_ms) + 'ms 校准' : '';
+  // 主行永远是「能直接说出口的那句话」；没有 answer 才退回原文摘录
+  const main = c.answer
+    ? '<div class="ans">' + esc(c.answer) + '</div>'
+    : '<div class="snip" style="margin-top:0">' + esc(c.snippet) + '</div>';
+  return '<div class="top"><span class="badge">' + esc(badge) + '</span>' +
+    '<span class="title">' + esc(c.title) + '</span><span class="score">' + c.score + '</span></div>' +
+    main +
+    (c.answer && c.snippet ? '<div class="snip">' + esc(c.snippet) + '</div>' : '') +
+    tops +
+    (c.note ? '<div class="note">' + esc(c.note) + '</div>' : '') +
+    '<div class="meta"><span>as_of ' + esc(c.as_of) + (c.degraded ? ' · 数据降级' : '') +
+    '</span><span>' + esc(c.source) + ms + rms + '</span></div>';
+}
+function cardClass(c) {
+  return 'card' + (c.visibility === 'internal' ? ' internal' : '') +
+    (c.provisional ? ' provisional' : '') + (c.demote ? ' demoted' : '');
+}
+function armTtl(el, ttl) {
+  clearTimeout(el._t1); clearTimeout(el._t2);
+  const ms = (ttl || 45) * 1000;
+  el._t1 = setTimeout(() => el.classList.add('fading'), ms);
+  el._t2 = setTimeout(() => el.remove(), ms + 600);
+}
+function onHint(c) {
+  const empty = $('cards').querySelector('.empty'); if (empty) empty.remove();
+  const el = document.createElement('div');
+  el.id = 'c-' + c.id;
+  el.className = cardClass(c);
+  el.innerHTML = cardInner(c);
+  $('cards').prepend(el);
+  armTtl(el, c.ttl);
+}
+function onHintUpdate(c) {
+  const el = document.getElementById('c-' + c.id);
+  if (!el) { onHint(c); return; }
+  el.className = cardClass(c);
+  el.innerHTML = cardInner(c);
+  el.classList.add('upd');
+  setTimeout(() => el.classList.remove('upd'), 900);
+  if (!c.demote) { armTtl(el, c.ttl); log('粗卡已校准：' + c.title); }
+  else { log('粗卡降级：' + c.title, 'w'); }
+}
+function onStats(d) {
+  $('s-turns').textContent = d.turns; $('s-topics').textContent = d.topics;
+  $('s-cards').textContent = d.cards; $('s-silenced').textContent = d.silenced;
+  $('s-topicp95').textContent = d.topic_p95_ms || '—';
+  $('s-cardp95').textContent = d.card_p95_ms || '—';
+}
+
+function fmtBytes(n) {
+  return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1024).toFixed(1) + ' KB';
+}
+function onAudioStats(d) {
+  $('audiostat').innerHTML =
+    '音频帧 <b>' + (d.frames || 0) + '</b> · <b>' + fmtBytes(d.bytes || 0) +
+    '</b> · <b>' + Number(d.seconds || 0).toFixed(1) + ' s</b> · ' + esc(d.provider || '—') +
+    ' / ' + esc(d.lang || '—') + (d.voice_frames ? ' · 有声帧 <b>' + d.voice_frames + '</b>' : '');
+}
+
+function bindSSE() {
+  const es = new EventSource('/events');
+  es.onopen = () => { chip('c-sse', 'SSE 已连接', 'on'); log('SSE 已连接'); };
+  es.onerror = () => chip('c-sse', 'SSE 重连中', 'warn');
+  es.addEventListener('asr.partial', e => onPartial(JSON.parse(e.data)));
+  es.addEventListener('asr.final',  e => onFinal(JSON.parse(e.data)));
+  es.addEventListener('topic',      e => onTopic(JSON.parse(e.data)));
+  es.addEventListener('hint',       e => onHint(JSON.parse(e.data)));
+  es.addEventListener('hint.update', e => onHintUpdate(JSON.parse(e.data)));
+  es.addEventListener('stats',      e => onStats(JSON.parse(e.data)));
+  es.addEventListener('silenced',   e => log('抑制：' + JSON.parse(e.data).reason));
+  es.addEventListener('audio.stats', e => onAudioStats(JSON.parse(e.data)));
+  es.addEventListener('status',     e => {
+    const d = JSON.parse(e.data);
+    const raw = String(d.message || '');
+    // 鉴权类诊断可能很长（含项目一致性 / Resource ID / Logid），日志只留前两行，
+    // 完整内容引导到「检测豆包密钥」，避免日志区被一段排查说明刷屏。
+    const lines = raw.split('\n');
+    let short = lines.slice(0, 2).join(' ');
+    if (lines.length > 2 || short.length > 220) {
+      short = short.slice(0, 200) + ' …（点「检测豆包密钥」看完整诊断）';
+    }
+    log(short, d.level === 'warn' ? 'w' : '');
+  });
+}
+
+loadState(); updateTrack(); bindSSE(); probeMic();
+</script>
+</body>
+</html>

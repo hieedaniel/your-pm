@@ -1,0 +1,137 @@
+name: docker
+
+# 目标：push 到 main 就自动构建镜像并推到 GitHub Container Registry（GHCR），
+# 服务器上只需 docker compose pull && up -d，不用在服务器上装构建环境。
+#
+# 产物地址：ghcr.io/<owner>/<repo>:latest  →  ghcr.io/hieedaniel/your-pm:latest
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:          # 手动触发：Actions 页面 → 本工作流 → Run workflow
+
+env:
+  REGISTRY: ghcr.io
+  # 直接用仓库名，避免 owner/repo 改名后这里忘了同步
+  IMAGE_NAME: ${{ github.repository }}
+  # 服务器是 x86 就保持 amd64（构建快、体积小）。
+  # 要同时出 ARM 镜像（比如甲骨文/树莓派）改成：linux/amd64,linux/arm64
+  # 注意：纯标准库代码跨架构没问题，但 QEMU 模拟构建会慢 3–5 倍。
+  PLATFORMS: linux/amd64
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write        # 推 GHCR 必须；GITHUB_TOKEN 自带的，不用另配密钥
+
+    steps:
+      - name: 拉代码
+        uses: actions/checkout@v4
+
+      - name: 开启 QEMU（多架构时才真正起作用）
+        uses: docker/setup-qemu-action@v3
+
+      - name: 准备 Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: 登录 GHCR（PR 不推镜像，跳过）
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 计算镜像标签
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # latest 只在 main 分支推，避免 tag / PR 把 latest 覆盖成旧代码
+            type=raw,value=latest,enable={{is_default_branch}}
+            # v1.2.3 → 1.2.3 与 1.2
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            # 每次提交都有 sha 短标签，便于回滚：ghcr.io/...:sha-1a2b3c4
+            type=sha,prefix=sha-,format=short
+          labels: |
+            org.opencontainers.image.title=your-pm live
+            org.opencontainers.image.description=切身产品经理 · 实时语音链路（豆包 ASR + WMA 主题提取）
+
+      - name: 构建并推送
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # ghcr.io 拉基础镜像偶尔慢，允许重试
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: 输出产物信息
+        run: |
+          {
+            echo "### 镜像已发布"
+            echo ""
+            echo '```'
+            echo "${{ steps.meta.outputs.tags }}"
+            echo '```'
+            echo ""
+            echo "- digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "- 平台: \`${{ env.PLATFORMS }}\`"
+            echo ""
+            echo "服务器上拉取："
+            echo '```bash'
+            echo "docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # 冒烟检查：镜像在 Linux 上到底能不能起来。
+  # 用仓库里的 config.example.json 当配置（占位密钥不影响服务启动），探 /api/state。
+  # 这一步不阻塞发布：配置模板若被改动导致起不来，先保住镜像可用，再回来修。
+  smoke:
+    needs: build
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: 拉代码（取配置模板）
+        uses: actions/checkout@v4
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 起容器探活
+        run: |
+          set -e
+          chmod 644 config.example.json
+          IMG="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
+          docker pull "$IMG"
+          docker run -d --name smoke -p 19535:19535 \
+            -v "$PWD/config.example.json:/app/config.json:ro" \
+            -e QS_CONFIG=/app/config.json "$IMG" || {
+              echo "容器启动失败，日志："; docker logs smoke; exit 1; }
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:19535/api/state >/tmp/state.json; then
+              echo "第 ${i} 次探活成功"; head -c 400 /tmp/state.json; echo; exit 0
+            fi
+            sleep 2
+          done
+          echo "60 秒内 /api/state 未就绪，容器日志："
+          docker logs smoke
+          exit 1

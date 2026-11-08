@@ -1,0 +1,118 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8780
+  },
+  "asr": {
+    "provider": "doubao",
+    "api_version": "2.0",
+    "billing": "duration",
+    "resource_id": "volc.seedasr.sauc.duration",
+    "resource_ids": {
+      "2.0.duration": "volc.seedasr.sauc.duration",
+      "2.0.concurrent": "volc.seedasr.sauc.concurrent",
+      "1.0.duration": "volc.bigasr.sauc.duration",
+      "1.0.concurrent": "volc.bigasr.sauc.concurrent",
+      "file.2.0.async": "volc.seedasr.auc"
+    },
+    "auth_mode": "new",
+    "api_key": "你的豆包语音 API Key",
+    "app_key": "",
+    "access_key": "",
+    "project": "",
+    "endpoint_stream": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async",
+    "endpoint_segment": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_nostream",
+    "stream_mode": 0,
+    "default_lang": "zh-CN",
+    "stream_langs": [
+      "zh-CN",
+      "en-US",
+      "yue-CN",
+      "auto"
+    ],
+    "segment_ms": 4000,
+    "sample_rate": 16000,
+    "chunk_ms": 200,
+    "end_window_size": 800,
+    "enable_nonstream": true,
+    "hotwords": [
+      "智慧园区",
+      "凯翼",
+      "访客",
+      "周界",
+      "配电室",
+      "数字化月台",
+      "showOS",
+      "雷视一体机",
+      "AR实景",
+      "一脸通"
+    ]
+  },
+  "wma": {
+    "provider": "auto",
+    "system_prompt_file": "prompts/topic_extract.md",
+    "timeout_ms": 2500,
+    "acp": {
+      "base_url": "https://www.workbuddy.cn/v2/enterprises/{enterprise_id}/managedagent",
+      "enterprise_id": "your_enterprise_id",
+      "app_key": "",
+      "user_key": "ck_<keyID>.<secret>（企业成员个人 Key）",
+      "agent_id": "",
+      "version_id": "",
+      "link": "",
+      "token": ""
+    },
+    "openai": {
+      "base_url": "https://api.vectorengine.ai/v1",
+      "api_key": "",
+      "model": "gpt-4o-mini"
+    },
+    "prompt_mode": "agent",
+    "taxonomy_file": "prompts/taxonomy.json"
+  },
+  "mcp": {
+    "transport": "local",
+    "adapter": "none",
+    "demo_set": "kaiyi",
+    "docs_dir": "docs-kaiyi",
+    "tool_search": "docs.search",
+    "tool_get": "docs.get",
+    "timeout_ms": 6000,
+    "http": {
+      "url": "https://perf.seveninfo.cn/mcp",
+      "token": "",
+      "protocol_version": "2025-06-18"
+    },
+    "perf": {
+      "types": [
+        "requirement",
+        "issue",
+        "project"
+      ],
+      "max_keywords": 1,
+      "top_k": 5,
+      "cache_seconds": 120,
+      "timeout_ms": 2500,
+      "deadline_ms": 1500,
+      "require_primary": true,
+      "include_completed": true,
+      "promote_completed": false
+    },
+    "stdio": {
+      "command": "",
+      "args": []
+    },
+    "sources": []
+  },
+  "policy": {
+    "max_cards_per_10min": 10,
+    "max_assist_per_10min": 6,
+    "card_ttl_seconds": 45,
+    "min_confidence": 0.55,
+    "assist_min_score": 0.45,
+    "dedupe_seconds": 90,
+    "max_hints_per_turn": 2,
+    "progressive_push": true,
+    "progressive_min_score": 0.5
+  }
+}

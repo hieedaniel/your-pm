@@ -1,0 +1,54 @@
+# 切身产品经理 · 实时音频链路
+# 部署：把整个 qieshen-live/ 目录拷到服务器，然后 docker compose up -d --build
+# 改端口 / 改绑定地址不用动文件：BIND_ADDR=0.0.0.0 docker compose up -d
+services:
+  qieshen-live:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # 国内服务器改用镜像源：BASE_IMAGE=registry.cn-hangzhou.aliyuncs.com/library/python:3.13-slim docker compose build
+      args:
+        BASE_IMAGE: ${BASE_IMAGE:-python:3.13-slim}
+    image: qieshen-live:1.0
+    container_name: qieshen-live
+    restart: unless-stopped
+    init: true                      # 代收 SIGTERM，docker stop 不会留下僵尸进程
+
+    # 只绑本机：前面用 Nginx 反代 + HTTPS。
+    # 原因有两个：① 浏览器 getUserMedia 只在 https / localhost 下可用；
+    # ② 这个服务没有登录态，谁连上谁就能烧你的豆包 ASR 额度。
+    # 临时直连测试：BIND_ADDR=0.0.0.0 docker compose up -d
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-19535}:19535"
+
+    environment:
+      QS_HOST: "0.0.0.0"           # 容器内必须监听全网卡，否则端口映射进不来
+      QS_PORT: "19535"
+      QS_CONFIG: "/app/config.json"
+      TZ: "Asia/Shanghai"
+
+    volumes:
+      # 凭据留在宿主机，镜像里没有。改 Key 只需改这个文件 + restart。
+      - ./config.json:/app/config.json:ro
+      # 知识库改了不想重新 build？取消下面这行注释即可热替换
+      # - ./docs-kaiyi:/app/docs-kaiyi:ro
+
+    # 一台机器跑很多服务时，日志不设上限会把磁盘写满
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os,urllib.request;u='http://127.0.0.1:%s/api/state'%os.environ.get('QS_PORT','19535');urllib.request.urlopen(u,timeout=2)\""]
+      interval: 30s
+      timeout: 3s
+      start_period: 25s
+      retries: 3
+
+    # 单实例最多吃这么多内存（纯 asyncio，正常情况下 60–100MB 足够）
+    deploy:
+      resources:
+        limits:
+          memory: 512M

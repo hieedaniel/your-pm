@@ -1,0 +1,14 @@
+# 一律用 LF 入库：Windows 上 core.autocrlf=true 会把 shell 脚本转成 CRLF，
+# 带 CRLF 的 docker-entrypoint.sh 在 Linux 容器里会报 "no such file or directory"。
+* text=auto eol=lf
+
+# 明确二进制，避免被当文本处理
+*.wav binary
+*.png binary
+*.jpg binary
+*.tgz binary
+
+# 这些脚本必须可执行（Dockerfile 里也 chmod 了，这里是双保险）
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.yml text eol=lf

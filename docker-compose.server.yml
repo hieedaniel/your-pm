@@ -1,0 +1,51 @@
+# 切身产品经理 · 实时音频链路 —— 服务器端「只拉镜像」部署
+#
+# 镜像由 GitHub Actions 自动构建（.github/workflows/docker.yml），
+# 服务器上不需要 Dockerfile，也不需要构建环境，只做三件事：
+#
+#   docker login ghcr.io -u <你的GitHub用户名>     # 私有包才需要，密码填 PAT
+#   docker compose -f docker-compose.server.yml pull
+#   docker compose -f docker-compose.server.yml up -d
+#
+# 这一份和 docker-compose.yml 的区别就一句话：把它那里的 build: 换成了 image:。
+
+services:
+  qieshen-live:
+    image: ${IMAGE:-ghcr.io/hieedaniel/your-pm:latest}
+    container_name: qieshen-live
+    restart: unless-stopped
+    init: true
+
+    # 只绑本机，前面用 Nginx 反代 + HTTPS。
+    # 浏览器 getUserMedia 只在 https / localhost 下可用；且本服务没有登录态。
+    # 临时直连：BIND_ADDR=0.0.0.0 docker compose -f docker-compose.server.yml up -d
+    ports:
+      - "${BIND_ADDR:-127.0.0.1}:${HOST_PORT:-19535}:19535"
+
+    environment:
+      QS_HOST: "0.0.0.0"
+      QS_PORT: "19535"
+      QS_CONFIG: "/app/config.json"
+      TZ: "Asia/Shanghai"
+
+    volumes:
+      # 凭据只在宿主机上，镜像里没有。改 Key = 改这个文件 + restart。
+      - ./config.json:/app/config.json:ro
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os,urllib.request;u='http://127.0.0.1:%s/api/state'%os.environ.get('QS_PORT','19535');urllib.request.urlopen(u,timeout=2)\""]
+      interval: 30s
+      timeout: 3s
+      start_period: 25s
+      retries: 3
+
+    deploy:
+      resources:
+        limits:
+          memory: 512M

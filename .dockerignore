@@ -1,0 +1,43 @@
+# 构建上下文排除：镜像里只应有运行时需要的文件
+# —— 凭据、测试脚本、探测脚本、文档草稿都不进镜像
+#
+# 注意：不要写 `*.md` 这类全量规则。docs-kaiyi/*.md 是知识库正文，
+# 被排除掉会直接 build 失败。只点名排掉不要的。
+
+# ---- 凭据：绝不打进镜像层（docker history / 镜像 tar 都能扒出来）----
+config.json
+config.json.bak
+.env
+*.key
+_agent_manifest_backup.json
+
+# ---- 开发 / 测试 / 一次性脚本 ----
+_test_*.py
+_test_*.js
+_render_test.js
+_wma_*.py
+_mock_acp.py
+_add_answer.py
+_probe_perf.py
+_demo_utterances.txt
+_*.html
+
+# ---- 文档（部署说明在宿主机看，不进镜像）----
+WMA-申请与接入指南.md
+WMA-提示词配置.md
+DEPLOY-Docker.md
+README.md
+
+# ---- 产物与缓存 ----
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+.dockerignore
+.venv/
+venv/
+
+# ---- 知识库源文件与解析中间产物（docs-kaiyi 才是成品）----
+_kb/
+docs/
