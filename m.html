@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#12325a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>切身产品经理 · 实时提示</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<style>
+  :root{
+    --bg:#f2f5f9; --card:#fff; --ink:#141b26; --ink2:#485566; --ink3:#8b96a6;
+    --line:#e4e9f1; --navy:#12325a; --blue:#1d4ed8; --blue-l:#eaf1ff;
+    --green:#12805c; --green-l:#e6f6ef; --orange:#c2591a; --orange-l:#fff2e7;
+    --red:#c83a3a; --red-l:#fdecec; --purple:#6b46b9;
+    --tap:0;   /* 字号缩放，由设置里的 A- / A+ 改写 */
+    --safe-t:env(safe-area-inset-top,0px);
+    --safe-b:env(safe-area-inset-bottom,0px);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;
+    font-size:calc(15px + var(--tap)*1px);line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+    display:flex;flex-direction:column;height:100dvh;overflow:hidden;
+    overscroll-behavior:none;user-select:none;-webkit-user-select:none;
+  }
+
+  /* ---------- 顶部：服务状态（一行，可点开抽屉） ---------- */
+  #bar{
+    flex:none;background:var(--navy);color:#fff;padding:calc(var(--safe-t) + 7px) 12px 7px;
+    display:flex;align-items:center;gap:8px;
+  }
+  #bar .dot{width:8px;height:8px;border-radius:50%;background:#4b647f;flex:none;
+    box-shadow:0 0 0 3px rgba(255,255,255,.08)}
+  #bar .dot.ok{background:#3ddba5}
+  #bar .dot.warn{background:#ffb35c}
+  #bar .dot.bad{background:#ff7b7b}
+  #bar .title{font-weight:700;font-size:13.5px;letter-spacing:.2px;flex:none}
+  #bar .chips{display:flex;gap:6px;flex:1;overflow:hidden;justify-content:flex-end}
+  .chip{
+    font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:99px;white-space:nowrap;
+    background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.16);color:#dbe6f5;
+  }
+  .chip.on{background:rgba(70,220,165,.18);border-color:rgba(70,220,165,.4);color:#b6f4dc}
+  .chip.warn{background:rgba(255,180,90,.16);border-color:rgba(255,180,90,.38);color:#ffd7a6}
+  .chip.off{opacity:.55}
+  #bar button{
+    flex:none;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.18);
+    color:#fff;border-radius:8px;padding:5px 9px;font-size:12px;font-weight:600;
+  }
+
+  /* ---------- 主题条 ---------- */
+  #topicbar{
+    flex:none;background:var(--card);border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:8px;padding:8px 12px;min-height:44px;
+    overflow-x:auto;overflow-y:hidden;scrollbar-width:none;
+  }
+  #topicbar::-webkit-scrollbar{display:none}
+  #topicbar .lab{font-size:11.5px;font-weight:700;color:var(--ink3);flex:none;letter-spacing:.4px}
+  #topicbar .pill{
+    flex:none;font-size:calc(13px + var(--tap)*1px);font-weight:700;padding:3px 10px;border-radius:99px;
+    background:var(--blue-l);color:var(--blue);border:1px solid #d3e2ff;white-space:nowrap;
+    animation:pop .28s cubic-bezier(.2,.9,.3,1.4);
+  }
+  #topicbar .pill.warn{background:var(--orange-l);color:var(--orange);border-color:#f6d7bd}
+  #topicbar .intent{font-size:11.5px;color:var(--ink3);flex:none;font-weight:600}
+  #topicbar .idle{font-size:12.5px;color:var(--ink3)}
+
+  /* ---------- 提示卡区（唯一的主内容） ---------- */
+  #feed{flex:1;overflow-y:auto;overflow-x:hidden;padding:12px 12px 4px;-webkit-overflow-scrolling:touch}
+  .card{
+    background:var(--card);border:1px solid var(--line);border-left:4px solid var(--blue);
+    border-radius:12px;padding:12px 14px;margin-bottom:10px;
+    box-shadow:0 1px 2px rgba(18,40,80,.05);
+    animation:slide .3s cubic-bezier(.2,.9,.3,1.05);
+  }
+  @keyframes slide{from{opacity:0;transform:translateY(-8px) scale(.985)}to{opacity:1;transform:none}}
+  @keyframes pop{from{opacity:0;transform:scale(.9)}to{opacity:1;transform:none}}
+  .card.internal{border-left-color:var(--purple)}
+  .card.provisional{border-left-color:var(--orange);background:linear-gradient(180deg,#fffdfa,#fff)}
+  .card.demoted{opacity:.45;border-left-color:var(--ink3)}
+  .card.fading{opacity:.25;transition:opacity .5s}
+  .card .top{display:flex;align-items:center;gap:7px;margin-bottom:6px}
+  .card .badge{
+    font-size:10.5px;font-weight:800;letter-spacing:.3px;padding:1px 7px;border-radius:5px;
+    background:var(--blue-l);color:var(--blue);flex:none;
+  }
+  .card.internal .badge{background:#f1ecfb;color:var(--purple)}
+  .card.provisional .badge{background:var(--orange-l);color:var(--orange)}
+  .card .title{font-size:12px;font-weight:700;color:var(--ink3);overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap;flex:1}
+  /* 答案永远是主角：能直接说出口的那句话 */
+  .card .ans{font-size:calc(16.5px + var(--tap)*1px);font-weight:600;color:var(--ink);
+    line-height:1.6;letter-spacing:.1px;word-break:break-word}
+  .card .snip{font-size:12.5px;color:var(--ink2);margin-top:6px;line-height:1.55;
+    display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+  .card .meta{font-size:11px;color:var(--ink3);margin-top:8px;display:flex;
+    justify-content:space-between;gap:10px}
+  .card .meta span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .card .meta span:last-child{text-align:right;flex:none;white-space:nowrap}
+  .card.upd{animation:flash .7s ease-out}
+  @keyframes flash{0%{background:#fff7e8}100%{background:#fff}}
+
+  #empty{text-align:center;color:var(--ink3);padding:18vh 28px 0;font-size:13.5px;line-height:1.8}
+  #empty b{display:block;font-size:15px;color:var(--ink2);margin-bottom:6px;font-weight:700}
+
+  /* ---------- 底部：录音控制 ---------- */
+  #dock{
+    flex:none;background:var(--card);border-top:1px solid var(--line);
+    padding:8px 14px calc(8px + var(--safe-b));
+    display:flex;align-items:center;gap:12px;
+  }
+  #dock .mid{flex:1;min-width:0}
+  #partial{
+    font-size:12.5px;color:var(--ink2);height:19px;line-height:19px;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  #partial.idle{color:var(--ink3)}
+  #meter{height:4px;background:#eef2f7;border-radius:99px;overflow:hidden;margin-top:5px}
+  #meter i{display:block;height:100%;width:0;border-radius:99px;
+    background:linear-gradient(90deg,#35b98a,#1d4ed8);transition:width .08s linear}
+  #rec{
+    flex:none;width:62px;height:62px;border-radius:50%;border:none;
+    background:linear-gradient(140deg,#2563eb,#1d4ed8);color:#fff;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+    font-size:10.5px;font-weight:700;letter-spacing:.5px;
+    box-shadow:0 6px 16px rgba(29,78,216,.32);
+    transition:transform .12s,background .2s,box-shadow .2s;padding:0;
+  }
+  #rec:active{transform:scale(.94)}
+  #rec.rec{background:linear-gradient(140deg,#e04a4a,#c83838);
+    box-shadow:0 6px 18px rgba(200,58,58,.38);animation:breathe 2.4s ease-in-out infinite}
+  #rec[disabled]{opacity:.5}
+  @keyframes breathe{0%,100%{box-shadow:0 6px 16px rgba(200,58,58,.3)}
+    50%{box-shadow:0 6px 26px rgba(200,58,58,.62)}}
+  #rec svg{width:20px;height:20px;fill:currentColor}
+
+  /* ---------- 状态抽屉 ---------- */
+  #mask{position:fixed;inset:0;background:rgba(14,22,38,.42);opacity:0;pointer-events:none;
+    transition:opacity .22s;z-index:40}
+  #mask.on{opacity:1;pointer-events:auto}
+  #sheet{
+    position:fixed;left:0;right:0;bottom:0;z-index:50;background:var(--card);
+    border-radius:18px 18px 0 0;transform:translateY(102%);
+    transition:transform .26s cubic-bezier(.2,.9,.3,1);
+    max-height:82dvh;overflow-y:auto;padding:0 0 calc(14px + var(--safe-b));
+  }
+  #sheet.on{transform:none}
+  #sheet .grab{width:40px;height:4px;border-radius:99px;background:#dfe5ee;margin:9px auto 2px}
+  #sheet h3{margin:12px 16px 8px;font-size:15px;color:var(--navy);display:flex;
+    justify-content:space-between;align-items:center}
+  #sheet .rows{padding:0 16px}
+  .row{display:flex;justify-content:space-between;gap:12px;padding:9px 0;
+    border-bottom:1px solid #f2f5f9;font-size:13px}
+  .row:last-child{border-bottom:none}
+  .row .k{color:var(--ink3);flex:none}
+  .row .v{text-align:right;color:var(--ink);font-weight:600;word-break:break-all}
+  .row .v.ok{color:var(--green)} .row .v.warn{color:var(--orange)} .row .v.bad{color:var(--red)}
+  .seg{display:flex;gap:8px;padding:4px 16px 12px}
+  .seg button{flex:1;padding:11px;border-radius:10px;border:1px solid var(--line);
+    background:#fff;font-size:13.5px;font-weight:700;color:var(--ink)}
+  .seg button:active{background:#f5f7fa}
+  .seg button.pri{background:var(--blue);border-color:var(--blue);color:#fff}
+  .seg button.dan{color:var(--red);border-color:#f4dada;background:var(--red-l)}
+  .sw{display:flex;justify-content:space-between;align-items:center;padding:11px 16px;
+    border-bottom:1px solid #f2f5f9;font-size:13.5px}
+  .sw .t{font-weight:600}
+  .sw .t small{display:block;font-weight:400;color:var(--ink3);font-size:11.5px;margin-top:1px}
+  .tog{width:48px;height:28px;border-radius:99px;background:#dde3ec;position:relative;
+    transition:background .18s;flex:none}
+  .tog.on{background:#1d4ed8}
+  .tog i{position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;
+    background:#fff;transition:left .18s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+  .tog.on i{left:23px}
+  .stepper{display:flex;align-items:center;gap:0;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .stepper button{border:none;background:#fff;padding:7px 12px;font-size:14px;font-weight:700;color:var(--ink)}
+  .stepper span{padding:0 8px;font-size:12.5px;color:var(--ink3);font-weight:700}
+  select{flex:1;padding:9px 10px;border:1px solid var(--line);border-radius:9px;
+    font-size:13.5px;background:#fff;color:var(--ink);font-weight:600}
+  #toast{
+    position:fixed;left:50%;bottom:calc(96px + var(--safe-b));transform:translate(-50%,10px);
+    background:rgba(20,27,38,.92);color:#fff;font-size:13px;font-weight:600;
+    padding:9px 16px;border-radius:99px;opacity:0;pointer-events:none;transition:.2s;z-index:60;
+    max-width:82vw;text-align:center;
+  }
+  #toast.on{opacity:1;transform:translate(-50%,0)}
+
+  /* 小屏（iPhone SE 一类，320~340px）：让出空间给主题条，第三个 chip 隐掉 */
+  @media (max-width:344px){
+    #c-kb{display:none}
+    .chip{font-size:11px;padding:2px 7px}
+    #rec{width:56px;height:56px}
+  }
+</style>
+</head>
+<body>
+
+<div id="bar">
+  <span class="dot" id="dot"></span>
+  <span class="title">切实</span>
+  <div class="chips">
+    <span class="chip off" id="c-asr">语音</span>
+    <span class="chip off" id="c-wma">主题</span>
+    <span class="chip off" id="c-kb">库 –</span>
+  </div>
+  <button id="btn-sheet" aria-label="服务状态">状态</button>
+</div>
+
+<div id="topicbar">
+  <span class="lab" id="tlab">主题</span>
+  <span class="idle" id="tidle">等待识别…</span>
+</div>
+
+<div id="feed">
+  <div id="empty">
+    <b>点右下角开始</b>
+    说话时这里会自动出现<br>主题与建议答复
+  </div>
+</div>
+
+<div id="dock">
+  <div class="mid">
+    <div id="partial" class="idle">未开始</div>
+    <div id="meter"><i id="levelbar"></i></div>
+  </div>
+  <button id="rec" aria-label="开始录音">
+    <svg id="ic-mic" viewBox="0 0 24 24"><path d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-5a3.5 3.5 0 1 0-7 0v5A3.5 3.5 0 0 0 12 15Zm6-3.5a6 6 0 0 1-5 5.91V20h-2v-2.59a6 6 0 0 1-5-5.91h2a4 4 0 0 0 8 0Z"/></svg>
+    <svg id="ic-stop" viewBox="0 0 24 24" style="display:none"><rect x="7" y="7" width="10" height="10" rx="2"/></svg>
+    <span id="rec-t">开始</span>
+  </button>
+</div>
+
+<div id="mask"></div>
+<div id="sheet">
+  <div class="grab"></div>
+  <h3>服务状态 <small id="srvhost" style="font-size:11.5px;color:var(--ink3);font-weight:500"></small></h3>
+  <div class="rows" id="statusrows"></div>
+
+  <h3>设置</h3>
+  <div class="sw">
+    <div class="t">新提示震动<small>收到新卡片时轻振一下</small></div>
+    <div class="tog" id="t-vib"><i></i></div>
+  </div>
+  <div class="sw">
+    <div class="t">屏幕常亮<small>录音时不让手机息屏</small></div>
+    <div class="tog" id="t-wake"><i></i></div>
+  </div>
+  <div class="sw">
+    <div class="t">字号</div>
+    <div class="stepper"><button id="fs-dn">A−</button><span id="fs-v">标准</span><button id="fs-up">A+</button></div>
+  </div>
+  <div class="sw" style="border-bottom:none">
+    <div class="t">识别语言</div>
+    <select id="lang"></select>
+  </div>
+
+  <div class="seg">
+    <button id="btn-clear">清空提示</button>
+    <button id="btn-reset" class="dan">重置会话</button>
+  </div>
+  <div class="seg">
+    <button id="btn-desk">桌面版</button>
+    <button id="btn-reload">重新连接</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+  ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const LS = {
+  get(k, d){ try { const v = localStorage.getItem(k); return v === null ? d : v; } catch(_) { return d; } },
+  set(k, v){ try { localStorage.setItem(k, v); } catch(_) {} }
+};
+
+// APK 壳（WebView + 原生 AudioRecord）注入；与桌面版同一套桥，逻辑保持一致
+const APK = (() => {
+  try { return (window.QSNative && window.QSNative.available()) ? window.QSNative : null; }
+  catch (_) { return null; }
+})();
+
+let ws = null, audioCtx = null, worklet = null, stream = null, silent = null,
+    recording = false, starting = false, reconnecting = false, wakeLock = null;
+let lastTopic = null;
+
+function toast(msg){
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.add('on');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('on'), 1900);
+}
+
+// ---------------------------------------------------------------------------
+// 音频上行：与桌面版同一条 WS 协议（16k/16bit/单声道 PCM 二进制帧）
+// ---------------------------------------------------------------------------
+window.__qsPcm = function (b64) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const bin = atob(b64);
+  const buf = new ArrayBuffer(bin.length);
+  const v = new Uint8Array(buf);
+  for (let i = 0; i < bin.length; i++) v[i] = bin.charCodeAt(i);
+  ws.send(buf);
+};
+window.__qsLevel = function (rms) {
+  $('levelbar').style.width = Math.min(100, Number(rms || 0) * 260) + '%';
+};
+
+function closeWs(){
+  const old = ws;
+  ws = null;
+  if (!old) return;
+  try { old.onopen = old.onclose = old.onerror = old.onmessage = null; } catch (_) {}
+  try { old.close(); } catch (_) {}
+}
+
+function connectWs(){
+  closeWs();
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const sid = 'm' + Date.now() + Math.random().toString(36).slice(2, 6);
+  const sock = new WebSocket(proto + '://' + location.host + '/audio?session=' + sid +
+                             '&lang=' + encodeURIComponent($('lang').value));
+  ws = sock;
+  sock.binaryType = 'arraybuffer';
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const done = (fn, arg) => { if (!settled) { settled = true; fn(arg); } };
+    sock.onopen = () => { done(resolve); };
+    sock.onerror = e => { done(reject, new Error('音频上行连接失败')); };
+    sock.onclose = () => {
+      done(reject, new Error('音频上行连接被关闭'));
+      if (recording && !reconnecting) {    // 录音中途掉了：补一次重连，别静默丢音
+        reconnecting = true;
+        connectWs().then(() => {}).catch(() => {}).finally(() => { reconnecting = false; });
+      }
+    };
+    setTimeout(() => done(reject, new Error('音频上行连接超时')), 6000);
+  });
+}
+
+async function openMic(){
+  try {
+    return await navigator.mediaDevices.getUserMedia({
+      audio:{channelCount:1, echoCancellation:true, noiseSuppression:true}, video:false });
+  } catch (e) {
+    if (e && (e.name === 'OverconstrainedError' || e.name === 'NotFoundError'))
+      return await navigator.mediaDevices.getUserMedia({audio:true, video:false});
+    throw e;
+  }
+}
+
+function setRecUI(on){
+  $('rec').classList.toggle('rec', on);
+  $('ic-mic').style.display = on ? 'none' : '';
+  $('ic-stop').style.display = on ? '' : 'none';
+  $('rec-t').textContent = on ? '停止' : '开始';
+  $('rec').setAttribute('aria-label', on ? '停止录音' : '开始录音');
+}
+
+async function keepAwake(on){
+  if (!('wakeLock' in navigator)) return;
+  try {
+    if (on) {
+      if (LS.get('qs.wake', '1') !== '1') return;
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch (_) {}
+}
+
+async function startRec(){
+  if (recording || starting) return;
+  starting = true;
+  $('rec').disabled = true;
+  try {
+    if (APK) {
+      await connectWs();
+      APK.start();
+      recording = true;
+      setRecUI(true);
+      $('partial').textContent = '原生录音已开启 · 听着呢';
+      $('partial').classList.remove('idle');
+      keepAwake(true);
+      return;
+    }
+    if (!window.isSecureContext || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia))
+      throw new Error('当前地址不允许采集麦克风（需 https）');
+    stream = await openMic();
+    await connectWs();                   // 先连上行再开管线，否则开头几百毫秒会丢
+    const AC = window.AudioContext || window.webkitAudioContext;
+    audioCtx = new AC();
+    await audioCtx.audioWorklet.addModule('/audio_worklet.js');
+    const src = audioCtx.createMediaStreamSource(stream);
+    worklet = new AudioWorkletNode(audioCtx, 'pcm16k', {numberOfInputs:1, numberOfOutputs:1});
+    silent = audioCtx.createGain(); silent.gain.value = 0;
+    src.connect(worklet); worklet.connect(silent); silent.connect(audioCtx.destination);
+    worklet.port.onmessage = e => {
+      if (e.data.type === 'pcm') {
+        if (ws && ws.readyState === WebSocket.OPEN) ws.send(e.data.buffer);
+        else if (recording && !reconnecting) {
+          reconnecting = true;
+          connectWs().catch(() => {}).finally(() => { reconnecting = false; });
+        }
+      } else if (e.data.type === 'level') {
+        $('levelbar').style.width = Math.min(100, e.data.rms * 260) + '%';
+      }
+    };
+    recording = true;
+    setRecUI(true);
+    $('partial').textContent = '听着呢…';
+    $('partial').classList.remove('idle');
+    keepAwake(true);
+    if (navigator.vibrate) navigator.vibrate(12);
+  } catch (e) {
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    if (audioCtx) { try { audioCtx.close(); } catch (_) {} audioCtx = null; }
+    closeWs();
+    toast(micError(e));
+    $('partial').textContent = '未开始';
+    $('partial').classList.add('idle');
+  } finally {
+    starting = false;
+    $('rec').disabled = false;
+  }
+}
+
+function stopRec(){
+  recording = false;
+  if (APK) { try { APK.stop(); } catch (_) {} }
+  if (worklet) { try { worklet.disconnect(); } catch (_) {} worklet = null; }
+  if (silent) { try { silent.disconnect(); } catch (_) {} silent = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (audioCtx) { try { audioCtx.close(); } catch (_) {} audioCtx = null; }
+  $('levelbar').style.width = '0%';
+  setRecUI(false);
+  // 一条 WS = 一次录音会话。停止时必须真关连接，否则下次会复用已 stop 的会话
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try { ws.send(JSON.stringify({type:'control', action:'stop'})); } catch (_) {}
+  }
+  closeWs();
+  keepAwake(false);
+  $('partial').textContent = '已停止 · 点击继续';
+  $('partial').classList.add('idle');
+  if (navigator.vibrate) navigator.vibrate(8);
+}
+
+function micError(e){
+  const n = (e && e.name) || '';
+  if (n === 'NotAllowedError' || n === 'SecurityError')
+    return '麦克风被拒绝 · 请在系统设置里允许本应用使用麦克风';
+  if (n === 'NotFoundError' || n === 'DevicesNotFoundError')
+    return '没有可用的麦克风';
+  if (n === 'NotReadableError')
+    return '麦克风被其他应用占用，关掉后再试';
+  return '无法开始录音：' + ((e && e.message) || e);
+}
+
+$('rec').addEventListener('click', () => recording ? stopRec() : startRec());
+
+// ---------------------------------------------------------------------------
+// 下行：SSE /events，只渲染主题与提示卡
+// ---------------------------------------------------------------------------
+function onPartial(d){
+  const el = $('partial');
+  el.textContent = d.text || '…';
+  el.classList.remove('idle');
+}
+
+function onFinal(){
+  $('partial').textContent = '听着呢…';
+}
+
+const INTENT = {
+  capability_question:'问能力', price_objection:'价格异议', competitor_compare:'竞品对比',
+  delivery_question:'问交期', roadmap_question:'问规划', tech_why:'技术追问',
+  requirement:'提需求', general:'', chitchat:''
+};
+function onTopic(d){
+  lastTopic = d;
+  const bar = $('topicbar');
+  const topics = (d.topics || []).filter(t => t && t.label);
+  if (!topics.length && !d.query) return;
+  $('tidle').style.display = 'none';
+  $('tlab').style.display = '';
+  const warn = !d.should_push || d.degraded;
+  const pills = topics.slice(0, 4).map(t =>
+    '<span class="pill' + (warn ? ' warn' : '') + '">' + esc(t.label) + '</span>').join('');
+  const it = INTENT[d.intent] || '';
+  const intent = it ? '<span class="intent">' + esc(it) + '</span>' : '';
+  const hold = !d.should_push ? '<span class="intent">· 暂不推送</span>' : '';
+  const html = pills + intent + hold;
+  if (bar._last === html) return;    // 同一主题反复出现就不重播动画
+  bar._last = html;
+  [...bar.querySelectorAll('.pill,.intent')].forEach(e => e.remove());
+  bar.insertAdjacentHTML('beforeend', html);
+  bar.scrollLeft = bar.scrollWidth;   // 新主题在最右，自动跟过去
+}
+
+function cardHtml(c){
+  // 只有需要提醒的才给徽标：内部口径要慎言，粗卡还没校准。普通卡不加噪声。
+  const badge = c.provisional ? '<span class="badge">校准确认中</span>'
+              : (c.visibility === 'internal' ? '<span class="badge">内部</span>' : '');
+  const main = c.answer
+    ? '<div class="ans">' + esc(c.answer) + '</div>'
+    : '<div class="ans" style="font-size:15px;font-weight:500">' + esc(c.snippet) + '</div>';
+  const snip = (c.answer && c.snippet)
+    ? '<div class="snip">' + esc(c.snippet) + '</div>' : '';
+  const ms = (c.update && !c.demote && c.refine_ms != null) ? ' · 校准 ' + Math.round(c.refine_ms) + 'ms'
+           : (c.latency_ms != null ? ' · ' + Math.round(c.latency_ms) + 'ms' : '');
+  return '<div class="top">' + badge +
+         '<span class="title">' + esc(c.title) + '</span></div>' +
+         main + snip +
+         '<div class="meta"><span>' + esc((c.source || '').replace(/^docs\//, '')) +
+         '</span><span>' + esc(c.as_of || '') + ms + '</span></div>';
+}
+function cardClass(c){
+  return 'card' + (c.visibility === 'internal' ? ' internal' : '') +
+    (c.provisional ? ' provisional' : '') + (c.demote ? ' demoted' : '');
+}
+function armTtl(el, ttl){
+  clearTimeout(el._t1); clearTimeout(el._t2);
+  const ms = (ttl || 60) * 1000;
+  el._t1 = setTimeout(() => el.classList.add('fading'), ms);
+  el._t2 = setTimeout(() => el.remove(), ms + 600);
+}
+function buzz(){
+  if (LS.get('qs.vib', '1') !== '1') return;
+  if (navigator.vibrate) navigator.vibrate(14);
+}
+function onHint(c){
+  const em = $('empty'); if (em) em.remove();
+  // 有时草稿主题还没定（topic 事件 topics 为空）卡片就先到了，
+  // 这时用卡片自带的主题补上，避免上面一直显示「等待识别」而下面已经出卡。
+  const bar = $('topicbar');
+  if (!bar._last && c.topics && c.topics.length) {
+    $('tidle').style.display = 'none';
+    bar._last = 'from-card';
+    bar.insertAdjacentHTML('beforeend', c.topics.slice(0, 4).map(l =>
+      '<span class="pill">' + esc(l) + '</span>').join(''));
+    bar.scrollLeft = bar.scrollWidth;
+  }
+  const feed = $('feed');
+  const el = document.createElement('div');
+  el.id = 'c-' + c.id;
+  el.className = cardClass(c);
+  el.innerHTML = cardHtml(c);
+  feed.prepend(el);
+  armTtl(el, c.ttl);
+  // 手机屏小，最多留 8 张，再多就把最旧的挤掉
+  const all = feed.querySelectorAll('.card');
+  for (let i = 8; i < all.length; i++) all[i].remove();
+  feed.scrollTop = 0;
+  if (!c.provisional) buzz();
+}
+function onHintUpdate(c){
+  const el = document.getElementById('c-' + c.id);
+  if (!el) { onHint(c); return; }
+  el.className = cardClass(c);
+  el.innerHTML = cardHtml(c);
+  el.classList.add('upd');
+  setTimeout(() => el.classList.remove('upd'), 720);
+  if (!c.demote) armTtl(el, c.ttl);
+}
+function bindSSE(){
+  const es = new EventSource('/events');
+  es.onopen = () => setDot('ok');
+  es.onerror = () => setDot('bad');
+  es.addEventListener('asr.partial', e => onPartial(JSON.parse(e.data)));
+  es.addEventListener('asr.final',   () => onFinal());
+  es.addEventListener('topic',       e => onTopic(JSON.parse(e.data)));
+  es.addEventListener('hint',        e => onHint(JSON.parse(e.data)));
+  es.addEventListener('hint.update', e => onHintUpdate(JSON.parse(e.data)));
+  es.addEventListener('status', e => {
+    const d = JSON.parse(e.data);
+    if (d.level === 'warn' || d.level === 'error')
+      toast(String(d.message || '').split('\n')[0].slice(0, 80));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 服务状态：顶部三个 chip + 抽屉明细
+// ---------------------------------------------------------------------------
+function setDot(kind){ $('dot').className = 'dot ' + kind; }
+function setChip(id, text, cls){ const e = $(id); e.textContent = text; e.className = 'chip ' + cls; }
+let ST = null;
+
+async function loadState(){
+  try {
+    const s = await (await fetch('/api/state')).json();
+    ST = s;
+    const a = s.asr || {}, w = s.wma || {}, mc = s.mcp || {};
+    const asrName = a.provider === 'mock' ? '模拟' :
+      (a.provider === 'doubao' ? '豆包' : (a.provider || '—'));
+    const asrOk = !!(a.validation && a.validation.ok) && a.provider !== 'mock';
+    setChip('c-asr', '语音·' + asrName, asrOk ? 'on' : 'warn');
+
+    const wname = w.provider === 'rule' ? '规则' : (w.provider === 'acp' ? '云端' : (w.provider || '—'));
+    const wWarn = w.provider === 'rule' || (w.degraded_count || 0) > 0;
+    setChip('c-wma', '主题·' + wname, wWarn ? 'warn' : 'on');
+
+    const docs = (s.docs || []).length, chunks = s.chunks || 0;
+    setChip('c-kb', '库 ' + (docs || chunks), docs || chunks ? 'on' : 'warn');
+
+    if (!recording) setDot(asrOk ? 'ok' : 'warn');
+    fillStatus(s);
+    fillLangs(a);
+  } catch (e) {
+    setChip('c-asr', '服务不可达', 'warn');
+    setDot('bad');
+  }
+}
+
+function fillStatus(s){
+  const a = s.asr || {}, sh = a.shape || {}, v = a.validation || {}, w = s.wma || {},
+        mc = s.mcp || {}, st = s.stats || {};
+  const docsN = (s.docs || []).length || s.chunks || 0;
+  const srcNames = (mc.sources || []).map(x => x.name).filter(Boolean).join('、') || '本地';
+  const wLabel = (w.provider === 'acp' ? '云端 Agent' : (w.provider === 'rule' ? '本地规则' : (w.provider || '—'))) +
+    ((w.degraded_count || 0) > 0 ? ' · 已降级 ' + w.degraded_count + ' 次' : '');
+  const rows = [
+    ['语音识别', (a.provider || '—') + (sh.version ? ' · ' + sh.version : ''),
+      (v.ok && a.provider !== 'mock') ? 'ok' : 'warn'],
+    ['主题提取', wLabel, w.provider === 'acp' ? 'ok' : 'warn'],
+    ['知识库', docsN + ' 篇 / ' + (s.chunks || 0) + ' 块 · ' + srcNames, docsN ? 'ok' : 'warn'],
+    ['本方统计', (st.turns || 0) + ' 话轮 · ' + (st.topics || 0) + ' 主题 · ' +
+      (st.cards || 0) + ' 卡' + (st.topic_p95_ms ? ' · ' + st.topic_p95_ms + 'ms' : ''), ''],
+    ['数据面', w.last_error ? String(w.last_error).slice(0, 40) : '正常', w.last_error ? 'warn' : 'ok'],
+  ];
+  // 只在有问题时才占用一行，正常状态不占地方
+  if (!a.auth_configured) rows.splice(1, 0, ['语音密钥', '未配置', 'bad']);
+  if (!w.enterprise_id_configured) rows.splice(2, 0, ['WMA 企业', '未填', 'bad']);
+  if (recording) rows.push(['上行状态', '录音中', 'ok']);
+
+  $('statusrows').innerHTML = rows.map(([k, val, cls]) =>
+    '<div class="row"><span class="k">' + esc(k) + '</span><span class="v ' + cls + '">' +
+    esc(val) + '</span></div>').join('');
+  $('srvhost').textContent = location.host;
+}
+
+function fillLangs(a){
+  const sel = $('lang');
+  const langs = a.stream_langs || ['zh-CN'];
+  if (sel._filled === langs.join()) { return; }
+  sel._filled = langs.join();
+  const names = {'zh-CN':'普通话','en-US':'英语','yue-CN':'粤语','auto':'自动'};
+  sel.innerHTML = langs.map(l =>
+    '<option value="' + esc(l) + '">' + esc(names[l] || l) + '</option>').join('');
+  const saved = LS.get('qs.lang', a.default_lang || 'zh-CN');
+  if (langs.includes(saved)) sel.value = saved;
+  sel.onchange = () => { LS.set('qs.lang', sel.value); toast('语言：' + (names[sel.value] || sel.value)); };
+}
+
+// ---------------------------------------------------------------------------
+// 抽屉与设置
+// ---------------------------------------------------------------------------
+function openSheet(on){
+  $('sheet').classList.toggle('on', on);
+  $('mask').classList.toggle('on', on);
+  if (on) loadState();
+}
+$('btn-sheet').addEventListener('click', () => openSheet(true));
+$('mask').addEventListener('click', () => openSheet(false));
+
+function bindTog(id, key, def){
+  const el = $(id);
+  const sync = () => el.classList.toggle('on', LS.get(key, def) === '1');
+  sync();
+  el.addEventListener('click', () => {
+    const on = LS.get(key, def) !== '1';
+    LS.set(key, on ? '1' : '0');
+    sync();
+    if (key === 'qs.wake' && !on) keepAwake(false);
+    if (key === 'qs.wake' && on && recording) keepAwake(true);
+  });
+}
+bindTog('t-vib', 'qs.vib', '1');
+bindTog('t-wake', 'qs.wake', '1');
+
+function applyFont(n){
+  n = Math.max(-1, Math.min(2, n));
+  LS.set('qs.fs', n);
+  document.documentElement.style.setProperty('--tap', n);
+  $('fs-v').textContent = ({'-1':'小','0':'标准','1':'大','2':'特大'})[n] || '标准';
+}
+applyFont(Number(LS.get('qs.fs', 0)));
+$('fs-up').addEventListener('click', () => applyFont(Number(LS.get('qs.fs', 0)) + 1));
+$('fs-dn').addEventListener('click', () => applyFont(Number(LS.get('qs.fs', 0)) - 1));
+
+$('btn-clear').addEventListener('click', () => {
+  $('feed').innerHTML = '<div id="empty"><b>已清空</b>继续说话，新提示会再出现</div>';
+  openSheet(false);
+});
+$('btn-reset').addEventListener('click', async () => {
+  if (recording) stopRec();
+  try { await fetch('/reset', {method:'POST'}); } catch (_) {}
+  $('feed').innerHTML = '<div id="empty"><b>会话已重置</b>点右下角开始新的录音</div>';
+  $('partial').textContent = '未开始';
+  $('partial').classList.add('idle');
+  [...$('topicbar').querySelectorAll('.pill,.intent')].forEach(e => e.remove());
+  $('tidle').style.display = '';
+  $('tidle').textContent = '等待识别…';
+  $('topicbar')._last = '';
+  openSheet(false);
+  toast('已重置');
+});
+$('btn-desk').addEventListener('click', () => location.href = '/?desk=1');
+$('btn-reload').addEventListener('click', () => location.reload());
+
+// 熄屏后 wake lock 会被系统释放，回到前台补一次
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && recording) keepAwake(true);
+});
+
+loadState(); bindSSE();
+setInterval(() => { if (!$('sheet').classList.contains('on')) loadState(); }, 20000);
+</script>
+</body>
+</html>

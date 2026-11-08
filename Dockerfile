@@ -26,7 +26,7 @@ RUN python -m pip install --no-cache-dir --disable-pip-version-check -r requirem
 # 只复制运行时真正会读的文件。测试脚本、探测脚本、构建脚本一概不进镜像。
 COPY server.py wsproto.py doubao_asr.py orchestrator.py \
      mcp_client.py mcp_docs.py mcp_multi.py mcp_perf.py wma_agent.py kb_admin.py ./
-COPY index.html kb.html audio_worklet.js sample.wav ./
+COPY index.html m.html kb.html audio_worklet.js sample.wav manifest.webmanifest ./
 COPY docs-kaiyi/ ./docs-kaiyi/
 COPY prompts/ ./prompts/
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

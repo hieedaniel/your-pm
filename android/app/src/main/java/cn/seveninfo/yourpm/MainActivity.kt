@@ -25,7 +25,7 @@ import android.widget.Toast
 class MainActivity : Activity() {
 
     companion object {
-        const val DEFAULT_URL = "https://se.seveninfo.cn/"
+        const val DEFAULT_URL = "https://se.seveninfo.cn/m"
         private const val PREF = "yourpm"
         private const val KEY_URL = "server_url"
         private const val REQ_MIC = 1001

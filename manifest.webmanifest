@@ -1,0 +1,12 @@
+{
+  "name": "切身产品经理 · 实时提示",
+  "short_name": "切身提示",
+  "description": "实时语音转写、主题识别与销售提示卡",
+  "start_url": "/m",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f2f5f9",
+  "theme_color": "#12325a",
+  "lang": "zh-CN"
+}

@@ -5,7 +5,8 @@
     浏览器打开 http://127.0.0.1:8780
 
 端点：
-    GET  /                 前端单页
+    GET  /                 前端单页（手机 UA 自动切 /m，?desk=1 强制桌面版）
+    GET  /m                手机精简版（只显示主题 + 提示卡 + 服务状态）
     GET  /audio_worklet.js 浏览器重采样处理器
     GET  /sample.wav       内置示例音频（无麦克风一键验证音频上行）
     WS   /audio            音频上行（binary 200ms PCM + text 控制帧）
@@ -28,6 +29,7 @@ import base64
 import binascii
 import json
 import os
+import re
 import secrets
 import time
 from urllib.parse import urlsplit, parse_qs
@@ -489,13 +491,33 @@ def _pdf_ready() -> bool:
         return False
 
 
+MOBILE_UA = re.compile(r"(?i)(android|iphone|ipod|ipad|harmonyos|mobile|okhttp|wv\))").search
+
+
+def _serve_html(writer, name: str):
+    with open(os.path.join(ROOT, name), "rb") as f:
+        data = f.read()
+    writer.write(_resp(200, data, "text/html; charset=utf-8"))
+
+
 async def handle_http(writer, method, path, headers, body: bytes):
     u = urlsplit(path)
     p = u.path
     if p in ("/", "/index.html"):
-        with open(os.path.join(ROOT, "index.html"), "rb") as f:
+        # 手机（含 APK 的 WebView）直接给精简版；桌面版永远留在 /?desk=1，
+        # 这样 APK 里的旧地址不用改，装上就看到手机界面。
+        q = parse_qs(u.query)
+        want_desk = (q.get("desk") or [""])[0] in ("1", "true")
+        if not want_desk and MOBILE_UA(headers.get("user-agent") or ""):
+            _serve_html(writer, "m.html")
+        else:
+            _serve_html(writer, "index.html")
+    elif p in ("/m", "/m/", "/m.html"):
+        _serve_html(writer, "m.html")
+    elif p == "/manifest.webmanifest":
+        with open(os.path.join(ROOT, "manifest.webmanifest"), "rb") as f:
             data = f.read()
-        writer.write(_resp(200, data, "text/html; charset=utf-8"))
+        writer.write(_resp(200, data, "application/manifest+json; charset=utf-8"))
     elif p == "/audio_worklet.js":
         with open(os.path.join(ROOT, "audio_worklet.js"), "rb") as f:
             data = f.read()

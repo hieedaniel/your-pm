@@ -31,6 +31,14 @@ curl -s localhost:19535/api/state | head -c 200
 否则浏览器不给麦克风权限（`getUserMedia` 的硬性要求）。
 Nginx 反代样例见 `nginx-qieshen-live.conf`，**SSE 必须 `proxy_buffering off`**。
 
+两个前端：
+
+| 地址 | 给谁用 | 内容 |
+|---|---|---|
+| `/` | 电脑（手机 UA 会自动切到 `/m`） | 三栏调试台：会话控制、转写、主题与卡片、自检、日志 |
+| `/m` | 手机 / APK | 只有主题条 + 提示卡 + 录音键，服务状态收进顶部「状态」抽屉 |
+| `/?desk=1` | 手机上临时看桌面版 | 强制桌面界面 |
+
 想在本机边改边跑（不用 Docker）：
 
 ```bash
@@ -83,7 +91,8 @@ wma_agent.py         WMA 主题提取（ACP 客户端 / 本地规则）
 mcp_docs.py          知识库检索（MCP + 主题加权），多目录合并索引
 mcp_client.py        MCP 传输层（stdio / http）
 kb_admin.py          知识库导入（md/txt/docx/pdf/url）与 MCP 源配置
-index.html           前端单页（录音、字幕、卡片）
+index.html           桌面版单页（录音、字幕、卡片、自检）
+m.html               手机版单页（主题 + 提示卡 + 状态抽屉）
 kb.html              知识库管理页
 prompts/             topic_extract.md 提示词 + taxonomy.json 封闭主题表
 docs-kaiyi/          19 篇知识库正文（只读）

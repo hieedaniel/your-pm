@@ -73,6 +73,15 @@ docker compose -f docker-compose.server.yml ps        # STATUS 应为 healthy
 curl -s localhost:19535/api/state | head -c 200; echo
 ```
 
+页面地址：
+
+| 地址 | 用途 |
+|---|---|
+| `https://你的域名/` | 电脑端调试台（手机访问会自动切到 `/m`） |
+| `https://你的域名/m` | 手机端精简版，APK 直接用这个 |
+| `https://你的域名/?desk=1` | 手机上强制看电脑版 |
+| `https://你的域名/kb` | 知识库管理（要口令） |
+
 想公开拉取（不用登录）：GitHub → 你的头像 → Packages → `your-pm` → Package settings →
 Change visibility → Public。
 

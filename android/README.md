@@ -33,7 +33,7 @@ gradle assembleDebug          # 产物：app/build/outputs/apk/debug/app-debug.a
 ## 怎么装、怎么用
 
 1. 手机允许「安装未知来源应用」，装上 `app-debug.apk`
-2. 首次打开填服务端地址（默认 `https://se.seveninfo.cn/`），之后可在右上角菜单改
+2. 首次打开填服务端地址（默认 `https://se.seveninfo.cn/m`，手机精简版），之后可在右上角菜单改
 3. 点「开始录音」→ 允许麦克风 → 说话，字幕与卡片实时出现
 
 > 服务端必须是 **HTTPS** 或手机能直连的内网地址。用 `http://IP:19535` 时页面能开、
