@@ -220,7 +220,8 @@ async def probe_wma(acp: dict) -> dict:
 # 「访客管理」「门禁访客」「人员出入」，而资料里叫「人员与车辆管理」。
 # 标签一对不上，检索再准也是白做。所以：表由资料生成（_wma_taxonomy.py），
 # 模型只能选，不能造；选偏了在下面这一层被拦掉，绝不外泄给前端。
-_TAX = {"by_label": {}, "by_id": {}, "by_doc": {}, "loaded": False}
+_TAX = {"by_label": {}, "by_id": {}, "by_doc": {}, "topics": [],
+        "aliases": {}, "loaded": False}
 
 
 def load_taxonomy(path: str | None = None) -> dict:
@@ -232,7 +233,8 @@ def load_taxonomy(path: str | None = None) -> dict:
     except (OSError, ValueError):
         _TAX.update(loaded=False)
         return _TAX
-    by_label, by_id, by_doc = {}, {}, {}
+    by_label, by_id, by_doc, rows = {}, {}, {}, []
+    aliases = {}          # 主题 label -> [客户实际会说的词]，本地规则匹配用
     for t in data.get("topics") or []:
         label = str(t.get("label") or "").strip()
         if not label:
@@ -243,7 +245,16 @@ def load_taxonomy(path: str | None = None) -> dict:
             by_id[str(t["id"]).upper()] = t
         if t.get("doc_id"):
             by_doc[label] = t["doc_id"]
-    _TAX.update(by_label=by_label, by_id=by_id, by_doc=by_doc, loaded=True)
+        say = [str(x).strip() for x in (t.get("say") or []) if str(x).strip()]
+        aliases[label] = say
+        rows.append({"id": t.get("id", ""), "label": label,
+                     "kind": t.get("kind") or "general",
+                     "visibility": t.get("visibility", "public"),
+                     "say": say,
+                     "tags": [str(x).strip() for x in (t.get("tags") or [])
+                              if str(x).strip()]})
+    _TAX.update(by_label=by_label, by_id=by_id, by_doc=by_doc,
+                topics=rows, aliases=aliases, loaded=True)
     return _TAX
 
 
@@ -321,12 +332,15 @@ def normalize(obj: dict | None, provider: str, degraded: bool, text: str) -> dic
             if not old or t["confidence"] > old["confidence"]:
                 best[t["label"]] = t
         topics = sorted(best.values(), key=lambda x: -x["confidence"])
-    query = str(obj.get("query") or "").strip()
+    raw_query = str(obj.get("query") or "").strip()
+    query = raw_query
     if not query:
         query = " ".join(t["label"] for t in topics) or text[:40]
-    push = bool(obj.get("should_push", True)) and bool(topics)
-    if not push and query and not topics:
-        # 模型说推、但强行给了一个它自己编的 label，全被拦了 → 不推
+    # 主题全被拦不代表这句话没用：只要还有可检索的串，卡片仍然值得推——
+    # 卡片自己有标题和结论，主题只是标签。旧逻辑在这里要求 topics 非空，
+    # 一旦主题表没对上就整条静默，现场看到的就是「什么都不出」。
+    push = bool(obj.get("should_push", True)) and (bool(topics) or bool(raw_query))
+    if not push:
         query = ""
     return {
         "lang": str(obj.get("lang") or "zh-CN"),
@@ -339,23 +353,44 @@ def normalize(obj: dict | None, provider: str, degraded: bool, text: str) -> dic
 
 
 class RuleExtractor:
-    """本地规则主题：与 WMA 同构输出，零配置可跑。词汇来自 docs 的 tags。"""
+    """本地规则主题：与 WMA 同构输出，零配置可跑。
+
+    词全部来自主题表（prompts/taxonomy.json）：label 本身、say（客户实际说法）、
+    tags（资料关键词）都映射回**表内 label**。产出的主题天然能过 normalize 的
+    强校验——否则会出现「规则给了主题、校验全丢掉」的死局：主题空 → 不推卡，
+    前端看起来就是「什么都不工作」。
+    """
     provider = "rule"
 
     def __init__(self, vocab: dict):
         self.vocab = vocab or {}
-        self.aliases = self.vocab.get("aliases") or {}
-        self.tags = self.vocab.get("tags") or []
+        self.rows = self.vocab.get("topics") or []
+        self._terms = []          # (归一化词, 主题 label, 权重)
+        for r in self.rows:
+            label = str(r.get("label") or "").strip()
+            if not label:
+                continue
+            self._terms.append((_squash(label), label, 1.0))
+            for s in r.get("say") or []:
+                s = str(s).strip()
+                if len(s) >= 2:
+                    self._terms.append((_squash(s), label, 0.92))
+            for tg in r.get("tags") or []:
+                tg = str(tg).strip()
+                if len(tg) >= 2:
+                    self._terms.append((_squash(tg), label, 0.78))
+        if not self._terms:       # 兼容只给了 aliases 的旧词表
+            for label, al in (self.vocab.get("aliases") or {}).items():
+                for a in al:
+                    self._terms.append((_squash(a), label, 0.9))
 
     async def extract(self, text: str, context: dict | None = None):
         raw = (text or "").strip()
         low = raw.lower()
+        sq = _squash(raw)
         lang = (context or {}).get("lang") or "zh-CN"
         # 多语种关键词回映射
-        mapped = []
-        for k, v in MULTILINGUAL.items():
-            if k in low and v not in raw:
-                mapped.append(v)
+        mapped = [v for k, v in MULTILINGUAL.items() if k in low and v not in raw]
         hay = raw + " " + " ".join(mapped)
 
         if any(c in low for c in CHITCHAT) and len(raw) < 18:
@@ -363,51 +398,28 @@ class RuleExtractor:
                               "intent": "chitchat", "should_push": False},
                              self.provider, False, raw)
 
-        topics, seen = [], set()
-
-        def add(label, kind, conf, evidence):
-            key = (label, kind)
-            if label in seen:
-                return
-            seen.add(label)
-            topics.append({"label": label, "kind": kind,
-                           "confidence": conf, "evidence": evidence})
-
-        for label, aliases in self.aliases.items():
-            for a in aliases:
-                if a.lower() in low:
-                    add(label, "product", 0.95, a)
-                    break
-        alias_words = {a.lower() for group in self.aliases.values() for a in group}
-        for tag in self.tags:
-            tlow = tag.lower()
-            if tlow in alias_words:          # 与规范产品名重复，不再单列一个主题
+        # 命中即累加到对应主题，同一主题取权重最高的那个词当证据
+        best = {}
+        for term, label, w in self._terms:
+            if not term:
                 continue
-            if len(tag) >= 2 and tlow in low:
-                if any(tlow in t["label"].lower().replace(" ", "") or
-                       t["label"].lower().replace(" ", "") in tlow for t in topics):
-                    continue
-                kind = "tech_principle" if any(w in tag for w in ("依据", "原理", "设计", "口径")) \
-                    else ("capability" if any(w in tag for w in ("边界", "不支持", "能力")) else "general")
-                add(tag, kind, 0.82, tag)
+            if term in sq or term in low:
+                old = best.get(label)
+                if not old or w > old[0]:
+                    best[label] = (w, term)
+        # 命中的主题越多，说明这句话越可能只是闲聊，降一点置信度
+        bump = 0.0 if len(best) <= 1 else -0.04 * (len(best) - 1)
+        topics = []
+        for label, (w, ev) in sorted(best.items(), key=lambda kv: -kv[1][0])[:3]:
+            conf = min(0.98, max(0.5, 0.5 + 0.48 * w + bump))
+            topics.append({"label": label, "kind": "general",
+                           "confidence": round(conf, 2), "evidence": ev})
 
         intent = "general"
         for name, kws in INTENT_RULES:
             if any(k in low for k in kws):
                 intent = name
                 break
-        # 意图标签要跟数据源无关：换成智慧园区知识库后，
-        # 「能力边界与不支持项」「报价与授权折扣」这种边缘网关口径会把主题带偏
-        kind_map = {
-            "capability_question": ("能不能做 / 支持范围", "capability"),
-            "tech_why": ("技术依据", "tech_principle"),
-            "roadmap_question": ("时间与规划", "roadmap"),
-            "price_objection": ("价格与商务", "price"),
-            "competitor_compare": ("竞品对比", "competitor"),
-            "delivery_question": ("交付与实施", "delivery"),
-        }
-        if intent in kind_map:
-            add(kind_map[intent][0], kind_map[intent][1], 0.88, raw[:24])
 
         zh_words = [w for w in re.findall(r"[\u4e00-\u9fff]{2,}", hay)
                     if w not in STOPWORDS]
@@ -415,10 +427,13 @@ class RuleExtractor:
                     if w not in STOPWORDS and w not in MULTILINGUAL]
         # 文档是中文：外文词已映射成中文术语后就不必再塞英文原词，避免稀释检索串
         words = zh_words[:8] + ([] if mapped else en_words[:4])
-        query = " ".join([t["label"] for t in topics[:2]] + mapped + words)
+        ev_words = [v[1] for _, v in sorted(best.items(), key=lambda kv: -kv[1][0])[:2]]
+        query = " ".join([t["label"] for t in topics[:2]] + mapped + ev_words + words)
         return normalize({"lang": lang, "query": query, "topics": topics,
-                          "intent": intent, "should_push": bool(topics or len(raw) > 8)},
+                          "intent": intent,
+                          "should_push": bool(topics) or len(raw) > 8},
                          self.provider, False, raw)
+
 
 
 class OpenAIExtractor:

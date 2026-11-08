@@ -236,8 +236,41 @@ tar -czf kb-backup-$(date +%F).tgz -C /opt/qieshen-live data/
 
 - 保存后立即重建检索入口，**不用重启容器**
 - 多个源按 `weight` 合并排序；关掉某个源等于把它从检索里摘掉
+- **本地库永远在列**：配了几个 MCP 源，本地 19 篇 + 上传文档都还参与检索并合并排序。
+  远程源连不上时卡片由本地兜住，不会「一配 MCP 就什么都不出」
 - 一个源都没配时，只用本地文档库，行为与之前完全一致
 - 配置落在 `data/kb/_mcp_sources.json`，优先级高于 `config.json` 里的 `mcp.sources`
+
+### 配了 MCP 但主题识别不出来 / 不给提示？
+
+这是**主题表不匹配**，不是链路断了。主题表决定「一句话归到哪一类」，模型和本地规则
+只能从表里选。导入自己的资料或接 MCP 之后，原来那张照 `docs-kaiyi` 写的 19 行表
+往往一个都对不上，于是主题空、卡片也跟着少。
+
+管理页最下面「主题表」→ 点 **「按知识库重建」**：文档标题成为主题，front-matter 里的
+`say` / `tags` 成为别名，手写表里的客户说法会保留。点完立即生效，不用重启。
+
+命令行等价操作：
+
+```bash
+T=$(cat /opt/qieshen-live/data/.admin_token)
+curl -s -H "X-Admin-Token: $T" -X POST -H 'Content-Type: application/json' \
+  -d '{}' localhost:19535/api/kb/taxonomy/rebuild
+```
+
+重建结果落在 `data/kb/taxonomy.json`，下次启动优先用它。想回到仓库里那份手写的，删掉即可：
+
+```bash
+rm /opt/qieshen-live/data/kb/taxonomy.json && docker compose -f docker-compose.server.yml restart
+```
+
+三种「没卡片」的区分办法：
+
+| 现象 | 含义 | 处理 |
+|---|---|---|
+| 顶栏显示「未匹配主题」+ 有卡片 | 主题表里没有这句，卡片靠原文检索正常出 | 正常；把相关资料导入后重建主题表 |
+| 顶栏灰字「知识库没收录这类内容」 | 检索判定这句不在业务范围内 | 导入对应资料；否则宁可不推，推错卡更糟 |
+| 「源异常」出现在状态抽屉 | 配的 MCP 源报错 | 回管理页点「测试」看具体错误 |
 
 命令行也能做（脚本化时方便）：
 

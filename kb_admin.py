@@ -424,3 +424,75 @@ def _num(v, default, lo, hi):
     except (TypeError, ValueError):
         return default
     return max(lo, min(hi, f))
+
+
+# ---------------------------------------------------------------------------
+# 主题表：跟着知识库走
+# ---------------------------------------------------------------------------
+def taxonomy_from_docs(store, baseline=None, limit: int = 60) -> dict:
+    """用当前知识库（内置 + 上传）生成主题表。
+
+    为什么需要：主题表原本是照 docs-kaiyi 手写的 19 行。一旦换成自己的资料
+    （导入文档或接 MCP），说的是完全不同的概念，模型/规则都没法归类，主题
+    就永远空着。这里的做法是把「文档标题」当主题、「front-matter 里的 say 与
+    tags」当别名，让表跟着库一起变。
+
+    baseline 是仓库里那份手写表：同一个 label 的词会被合并进来。手写表里的
+    say 是人工整理的客户说法，质量比自动抽的高，重建不该把它丢掉。
+
+    跨文档重复的 tag 会被丢掉：像「解决方案」「整体方案」这种词出现在每篇里，
+    留着只会让每句话都同时命中十几个主题。
+    """
+    from collections import Counter
+    docs = getattr(store, "docs", {}) or {}
+    base = {}
+    for t in (baseline or {}).get("topics") or []:
+        if t.get("label"):
+            base[t["label"]] = t
+    tag_count = Counter()
+    for d in docs.values():
+        for t in d.get("tags") or []:
+            tag_count[t] += 1
+    items = []
+    for name, d in sorted(docs.items(), key=lambda kv: (kv[1].get("title") or kv[0])):
+        label = str(d.get("title") or os.path.splitext(name)[0]).strip()
+        if not label:
+            continue
+        b = base.get(label) or {}
+        says, seen = [], set()
+        for s in list(b.get("say") or []) + list(d.get("say") or []):
+            s = str(s).strip()
+            if len(s) >= 2 and s not in seen:
+                seen.add(s)
+                says.append(s[:20])
+        tags, seen = [], set()
+        for t in list(b.get("tags") or []) + list(d.get("tags") or []):
+            t = str(t).strip()
+            # 手写表里的词无条件保留，自动抽的只留本篇独有的
+            keep = t in (b.get("tags") or []) or tag_count.get(t, 0) <= 1
+            if len(t) >= 2 and t not in seen and keep:
+                seen.add(t)
+                tags.append(t[:20])
+        items.append({"id": b.get("id") or ("T%02d" % (len(items) + 1)),
+                      "label": label[:40], "doc_id": name,
+                      "visibility": (d.get("visibility") or b.get("visibility")
+                                     or "public"),
+                      "say": says[:10], "tags": tags[:14]})
+        if len(items) >= limit:
+            break
+    return {"version": 2, "source": "kb", "generated": int(time.time()),
+            "topics": items}
+
+
+def taxonomy_path(kb_dir: str) -> str:
+    return os.path.join(kb_dir, "taxonomy.json")
+
+
+def save_taxonomy(kb_dir: str, taxo: dict) -> str:
+    os.makedirs(kb_dir, exist_ok=True)
+    path = taxonomy_path(kb_dir)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(taxo, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+    return path

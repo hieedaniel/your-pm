@@ -42,7 +42,8 @@ from mcp_docs import LocalMcpServer
 from mcp_client import McpClient, probe_mcp
 from mcp_multi import MultiSourceSearch
 from mcp_perf import PerfSearchProxy
-from wma_agent import build_extractor, extractor_info, probe_wma
+from wma_agent import (build_extractor, extractor_info, probe_wma,
+                       load_taxonomy)
 from orchestrator import Orchestrator
 import kb_admin as KB
 
@@ -202,6 +203,16 @@ def build_sources(mcfg: dict, vocab: dict):
         entries.append({"name": name, "proxy": proxy, "adapter": ad,
                         "weight": s.get("weight", 1.0), "prefix": prefix,
                         "timeout_ms": s.get("timeout_ms", 2500), "enabled": True})
+    # 本地库（内置 19 篇 + 上传文档）永远是基线源，放在最后一个兜底。
+    # 以前只要配了一个 MCP 源，SEARCH 就整个换成那条远程连接，本地资料直接
+    # 不参与检索——远程源不通、或工具名不是 docs.search 时，现场看到的就是
+    # 「一配 MCP 就什么卡都没有」。
+    local_client = (MCP if (mcfg.get("transport") or "local") == "local"
+                    else McpClient({"transport": "local"}, LOCAL))
+    if local_client is not None:
+        entries.append({"name": "本地知识库", "proxy": local_client,
+                        "adapter": "local", "weight": 1.0, "prefix": "",
+                        "timeout_ms": mcfg.get("timeout_ms", 6000), "enabled": True})
     return entries
 
 
@@ -221,6 +232,61 @@ def rebuild_search():
     if ORCH:
         ORCH.mcp = SEARCH
     return entries
+
+
+def active_taxonomy_path() -> str:
+    """管理页重建过就用生成的那份，否则用仓库里那份。"""
+    gen = KB.taxonomy_path(KB_DIR)
+    if os.path.isfile(gen):
+        return gen
+    p = CFG["wma"].get("taxonomy_file") or os.path.join("prompts", "taxonomy.json")
+    return p if os.path.isabs(p) else os.path.join(ROOT, p)
+
+
+def _apply_taxonomy(path: str) -> dict:
+    """把主题表灌进 VOCAB（本地规则的词典来源）。
+
+    只动 VOCAB，不重建 EXTRACTOR：调用方自己决定要不要换提取器，
+    否则每次改表都会把云端会话重建一遍。
+    """
+    tax = load_taxonomy(path)
+    if not tax.get("topics"):
+        return tax
+    VOCAB["topics"] = tax["topics"]
+    bucket = VOCAB.setdefault("aliases", {})
+    for label, says in (tax.get("aliases") or {}).items():
+        cur = bucket.setdefault(label, [])
+        for s in says:
+            if s not in cur:
+                cur.append(s)
+    return tax
+
+
+async def rebuild_taxonomy():
+    """按当前知识库重建主题表并热生效（只影响本地规则，云端提示词另行部署）。"""
+    global EXTRACTOR
+    # 基线用仓库里那份手写表：人工整理的客户说法优先保留，
+    # 自动生成只负责补「新导入的文档」这些手写表覆盖不到的部分。
+    base = load_taxonomy(os.path.join(ROOT, "prompts", "taxonomy.json"))
+    taxo = KB.taxonomy_from_docs(LOCAL.store, baseline=base)
+    if not taxo.get("topics"):
+        return {"ok": False, "error": "知识库里没有可用文档，先导入或恢复内置资料"}
+    path = KB.save_taxonomy(KB_DIR, taxo)
+    _apply_taxonomy(path)
+    applied = False
+    if getattr(EXTRACTOR, "provider", "") == "rule":
+        EXTRACTOR = build_extractor(dict(CFG["wma"], provider="rule"), VOCAB)
+        if ORCH:
+            ORCH.extractor = EXTRACTOR
+        applied = True
+    await emit("status", {"level": "info",
+                          "message": "主题表已按知识库重建 · %d 个主题%s" %
+                                     (len(taxo["topics"]),
+                                      "（本地规则已生效）" if applied
+                                      else "（云端主题需同步部署提示词）")})
+    return {"ok": True, "count": len(taxo["topics"]), "path": path,
+            "applied": applied,
+            "labels": [t["label"] for t in taxo["topics"][:12]]}
 
 
 def bootstrap():
@@ -248,7 +314,11 @@ def bootstrap():
     vocab = {"tags": tags, "aliases": aliases}
     VOCAB.clear()
     VOCAB.update(vocab)
-    EXTRACTOR = build_extractor(CFG["wma"], vocab)
+    # 主题表同时是本地规则的词典：label / say / tags 三条都在里面。
+    # 不并进来时规则只剩上面那份手写别名，工程类问题几乎命中不了，
+    # 结果就是「主题空 → 不推卡」——线上看起来像整个服务停了。
+    _apply_taxonomy(active_taxonomy_path())
+    EXTRACTOR = build_extractor(CFG["wma"], VOCAB)
 
     orch_cfg = dict(mcfg)
     orch_cfg["policy"] = CFG["policy"]
@@ -307,6 +377,17 @@ def _wma_ready() -> dict:
     }
 
 
+def search_active() -> list:
+    """当前真正参与检索的源。诊断「配了 MCP 却没结果」时先看这里。"""
+    srcs = getattr(SEARCH, "sources", None)
+    if isinstance(srcs, list) and srcs and isinstance(srcs[0], dict):
+        return [{"name": x.get("name"), "adapter": x.get("adapter"),
+                 "weight": x.get("weight")} for x in srcs]
+    if SEARCH is None:
+        return []
+    return [{"name": "本地知识库", "adapter": "local", "weight": 1.0}]
+
+
 def state():
     return {
         "server": CFG["server"],
@@ -324,6 +405,8 @@ def state():
         "mcp": {"sources": [{"name": n["name"], "info": n["client"].info()}
                             for n in SOURCE_CLIENTS] or [MCP.info() if MCP else {}],
                 "adapter": CFG["mcp"].get("adapter", "none"),
+                "active": search_active(),
+                "errors": list(getattr(SEARCH, "last_errors", []) or [])[-3:],
                 "search": SEARCH.stats() if hasattr(SEARCH, "stats") else {}},
         "docs": (LOCAL.store.listing() if (LOCAL and CFG["mcp"].get("adapter") != "perf"
                                           and len(SOURCE_CLIENTS) <= 1) else []),
@@ -464,12 +547,24 @@ async def kb_api(p: str, method: str, u, headers, body: bytes):
         d = payload()
         clean = KB.save_sources(KB_DIR, d.get("sources") or [])
         entries = rebuild_search()
+        active = [e["name"] for e in entries] or ["本地知识库"]
         await emit("status", {"level": "info",
                               "message": "MCP 知识源已更新 · 生效 %d 个：%s" %
-                                         (len(entries), "、".join(
-                                             e["name"] for e in entries) or "无（只用本地库）")})
-        return 200, {"ok": True, "sources": clean,
-                     "active": [e["name"] for e in entries]}
+                                         (len(entries), "、".join(active))})
+        return 200, {"ok": True, "sources": clean, "active": active}
+
+    if p == "/api/kb/taxonomy" and method == "GET":
+        path = active_taxonomy_path()
+        tax = load_taxonomy(path)
+        rows = [{"id": t.get("id", ""), "label": t["label"],
+                 "doc_id": t.get("doc_id", ""),
+                 "say": len(t.get("say") or []), "tags": len(t.get("tags") or [])}
+                for t in tax.get("topics") or []]
+        return 200, {"ok": True, "path": path, "count": len(rows), "topics": rows}
+
+    if p == "/api/kb/taxonomy/rebuild" and method == "POST":
+        r = await rebuild_taxonomy()
+        return (200 if r.get("ok") else 400), r
 
     if p == "/api/kb/sources/test" and method == "POST":
         d = payload()

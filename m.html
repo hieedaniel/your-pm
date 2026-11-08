@@ -68,6 +68,7 @@
     animation:pop .28s cubic-bezier(.2,.9,.3,1.4);
   }
   #topicbar .pill.warn{background:var(--orange-l);color:var(--orange);border-color:#f6d7bd}
+  #topicbar .pill.none{background:#eef1f6;color:var(--ink3);border-color:#e2e7ef;font-weight:600}
   #topicbar .intent{font-size:11.5px;color:var(--ink3);flex:none;font-weight:600}
   #topicbar .idle{font-size:12.5px;color:var(--ink3)}
 
@@ -490,8 +491,13 @@ function onTopic(d){
   $('tidle').style.display = 'none';
   $('tlab').style.display = '';
   const warn = !d.should_push || d.degraded;
-  const pills = topics.slice(0, 4).map(t =>
+  let pills = topics.slice(0, 4).map(t =>
     '<span class="pill' + (warn ? ' warn' : '') + '">' + esc(t.label) + '</span>').join('');
+  if (!topics.length && d.should_push) {
+    // 主题表里没有这一句：卡片仍按原文检索推出去，但顶栏不能停在「等待识别」，
+    // 否则现场看起来就是「系统没在工作」。点开状态抽屉才看得到原因。
+    pills = '<span class="pill warn" title="主题表里没有匹配项，本条按原文检索">未匹配主题</span>';
+  }
   const it = INTENT[d.intent] || '';
   const intent = it ? '<span class="intent">' + esc(it) + '</span>' : '';
   const hold = !d.should_push ? '<span class="intent">· 暂不推送</span>' : '';
@@ -501,6 +507,31 @@ function onTopic(d){
   [...bar.querySelectorAll('.pill,.intent')].forEach(e => e.remove());
   bar.insertAdjacentHTML('beforeend', html);
   bar.scrollLeft = bar.scrollWidth;   // 新主题在最右，自动跟过去
+}
+
+// 「为什么没有卡片」必须说出来：不说的话，现场只会以为系统没反应，
+// 实际可能只是这一句库里没有对应材料。原因来自服务端 silenced 事件。
+const SILENCE_TEXT = [
+  [/寒暄/, '这句是寒暄，不推'],
+  [/无有效主题/, '没识别出主题，按原文检索'],
+  [/无命中|无对应知识/, '知识库没收录这类内容'],
+  [/匹配度过低/, '知识库内容和这句对不上'],
+  [/去重/, '刚推过同类内容'],
+  [/额度/, '推送太频繁，稍后再看']
+];
+function onSilenced(d){
+  const reason = String((d && d.reason) || '');
+  if (!reason) return;
+  let msg = '这一句暂不推送';
+  for (const [re, s] of SILENCE_TEXT) if (re.test(reason)) { msg = s; break; }
+  toast(msg);
+  const bar = $('topicbar');
+  if ($('tidle').style.display !== 'none') return;   // 还没识别过，不抢主题位
+  const stale = [...bar.querySelectorAll('.pill')]
+    .find(e => e.textContent === '未匹配主题' || e.classList.contains('none'));
+  if (stale) { stale.textContent = msg; return; }    // 顶掉占位，不叠第二条
+  bar.insertAdjacentHTML('beforeend', '<span class="pill none">' + esc(msg) + '</span>');
+  bar.scrollLeft = bar.scrollWidth;
 }
 
 function cardHtml(c){
@@ -577,6 +608,7 @@ function bindSSE(){
   es.addEventListener('topic',       e => onTopic(JSON.parse(e.data)));
   es.addEventListener('hint',        e => onHint(JSON.parse(e.data)));
   es.addEventListener('hint.update', e => onHintUpdate(JSON.parse(e.data)));
+  es.addEventListener('silenced', e => onSilenced(JSON.parse(e.data)));
   es.addEventListener('status', e => {
     const d = JSON.parse(e.data);
     if (d.level === 'warn' || d.level === 'error')
@@ -621,7 +653,8 @@ function fillStatus(s){
   const a = s.asr || {}, sh = a.shape || {}, v = a.validation || {}, w = s.wma || {},
         mc = s.mcp || {}, st = s.stats || {};
   const docsN = (s.docs || []).length || s.chunks || 0;
-  const srcNames = (mc.sources || []).map(x => x.name).filter(Boolean).join('、') || '本地';
+  const srcNames = (mc.active || []).map(x => x.name).filter(Boolean).join(' + ')
+    || (mc.sources || []).map(x => x.name).filter(Boolean).join('、') || '本地';
   const wLabel = (w.provider === 'acp' ? '云端 Agent' : (w.provider === 'rule' ? '本地规则' : (w.provider || '—'))) +
     ((w.degraded_count || 0) > 0 ? ' · 已降级 ' + w.degraded_count + ' 次' : '');
   const rows = [
@@ -636,6 +669,9 @@ function fillStatus(s){
   // 只在有问题时才占用一行，正常状态不占地方
   if (!a.auth_configured) rows.splice(1, 0, ['语音密钥', '未配置', 'bad']);
   if (!w.enterprise_id_configured) rows.splice(2, 0, ['WMA 企业', '未填', 'bad']);
+  // 远程源报错时多一行，正是「配了 MCP 却没卡片」最需要看到的信息
+  if ((mc.errors || []).length)
+    rows.push(['源异常', String(mc.errors[mc.errors.length - 1]).slice(0, 44), 'warn']);
   if (recording) rows.push(['上行状态', '录音中', 'ok']);
 
   $('statusrows').innerHTML = rows.map(([k, val, cls]) =>

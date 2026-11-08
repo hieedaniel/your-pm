@@ -38,6 +38,7 @@ class Orchestrator:
         self.topic_count = 0
         self.card_count = 0
         self.silenced = Counter()
+        self._silence_sent = {}       # turn_id -> 已发过的原因，避免一轮刷屏
         self.pushed_docs = {}          # doc_id -> last push ts
         self.core_times = deque()
         self.assist_times = deque()
@@ -335,7 +336,17 @@ class Orchestrator:
         return True, "通过"
 
     async def _silence(self, turn_id, reason):
-        self.silenced[reason.split("：")[0]] += 1
+        key = reason.split("：")[0]
+        sent = self._silence_sent.setdefault(turn_id, set())
+        # 一个话轮会拿多条候选依次判，同一类原因会重复出现；
+        # 不在这一层去重，前端就会连着弹好几条一模一样的提示。
+        if key in sent:
+            return
+        sent.add(key)
+        if len(self._silence_sent) > 64:      # 只留最近若干轮，别让字典长胖
+            for k in list(self._silence_sent)[:-32]:
+                self._silence_sent.pop(k, None)
+        self.silenced[key] += 1
         await self.emit("silenced", {"turn_id": turn_id, "reason": reason})
 
     async def _emit_stats(self):
@@ -360,6 +371,7 @@ class Orchestrator:
     def reset(self):
         self.turn_no = self.topic_count = self.card_count = 0
         self.silenced.clear()
+        self._silence_sent.clear()
         self.pushed_docs.clear()
         self.core_times.clear()
         self.assist_times.clear()

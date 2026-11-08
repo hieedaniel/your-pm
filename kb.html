@@ -158,6 +158,19 @@
   </div>
 
   <div class="card">
+    <h2>主题表</h2>
+    <p class="tip">主题表决定「一句话能被归到哪一类」。模型和本地规则只能从表里选，不能自己造——
+      所以换了知识库之后（导入自己的资料、接 MCP），旧表里的 19 个主题往往一个都对不上，
+      表现就是主题一直空着、提示卡也少。按当前知识库重建即可：文档标题成为主题，
+      front-matter 里的 say / tags 成为别名，手写表里的客户说法会保留下来。</p>
+    <div id="taxInfo" class="tip">点「查看当前表」读取。</div>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button onclick="loadTaxonomy()">查看当前表</button>
+      <button class="primary" onclick="rebuildTaxonomy()">按知识库重建</button>
+    </div>
+  </div>
+
+  <div class="card">
     <h2>操作记录</h2>
     <div id="log">就绪。</div>
   </div>
@@ -360,6 +373,26 @@ async function saveSources() {
     log('已保存 ' + r.sources.length + ' 个源，生效：' + ((r.active || []).join('、') || '仅本地库'), 's');
     refresh();
   } catch (e) { log('保存失败：' + e.message, 'e'); }
+}
+
+// ---------- 主题表 ----------
+async function loadTaxonomy() {
+  try {
+    const r = await api('/api/kb/taxonomy');
+    $('#taxInfo').textContent = '当前 ' + r.count + ' 个主题 · ' + r.path;
+    log('主题表 ' + r.count + ' 行：' + r.topics.map(t => t.label).slice(0, 6).join('、') +
+        (r.count > 6 ? ' …' : ''), 's');
+  } catch (e) { log('读取主题表失败：' + e.message, 'e'); }
+}
+
+async function rebuildTaxonomy() {
+  if (!confirm('按当前知识库重建主题表？会覆盖上一次重建的结果（手写表里的客户说法会保留）。')) return;
+  try {
+    const r = await api('/api/kb/taxonomy/rebuild', {});
+    $('#taxInfo').textContent = '已重建 ' + r.count + ' 个主题 · ' + r.path;
+    log('主题表已重建：' + r.count + ' 个（' +
+        (r.applied ? '本地规则已生效' : '云端主题需同步部署提示词') + '）', 's');
+  } catch (e) { log('重建失败：' + e.message, 'e'); }
 }
 
 // ---------- 启动 ----------
